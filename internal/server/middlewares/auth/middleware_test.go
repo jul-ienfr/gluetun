@@ -56,6 +56,50 @@ func Test_authHandler_ServeHTTP(t *testing.T) {
 			requestPath:   "/v1/portforward",
 			statusCode:    http.StatusOK,
 		},
+		"reader_cannot_switch": {
+			settings: Settings{
+				Roles: []Role{
+					{
+						Name:   "reader",
+						Auth:   AuthNone,
+						Scope:  "reader",
+						Routes: []string{"POST /v1/vpn/switch"},
+					},
+				},
+			},
+			makeLogger: func(ctrl *gomock.Controller) *MockDebugLogger {
+				logger := NewMockDebugLogger(ctrl)
+				logger.EXPECT().Debugf("access to route %s forbidden for role %s due to insufficient scope",
+					"POST /v1/vpn/switch", "reader")
+				return logger
+			},
+			requestMethod: http.MethodPost,
+			requestPath:   "/v1/vpn/switch",
+			statusCode:    http.StatusForbidden,
+			responseBody: `{"error":{"code":"forbidden_scope",` +
+				`"message":"insufficient scope","job_id":null,"retryable":false}}`,
+		},
+		"reader_can_read": {
+			settings: Settings{
+				Roles: []Role{
+					{
+						Name:   "reader",
+						Auth:   AuthNone,
+						Scope:  "reader",
+						Routes: []string{"GET /v1/vpn/state"},
+					},
+				},
+			},
+			makeLogger: func(ctrl *gomock.Controller) *MockDebugLogger {
+				logger := NewMockDebugLogger(ctrl)
+				logger.EXPECT().Debugf("access to route %s authorized for role %s",
+					"GET /v1/vpn/state", "reader")
+				return logger
+			},
+			requestMethod: http.MethodGet,
+			requestPath:   "/v1/vpn/state",
+			statusCode:    http.StatusOK,
+		},
 	}
 
 	for name, testCase := range testCases {

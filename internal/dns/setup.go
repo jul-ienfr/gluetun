@@ -21,7 +21,8 @@ func (l *Loop) setupServer(ctx context.Context, settings settings.DNS) (runError
 		return nil, fmt.Errorf("updating filter: %w", err)
 	}
 
-	serverSettings, err := buildServerSettings(settings, l.filter, l.localResolvers, l.localSubnets, l.logger)
+	serverSettings, err := buildServerSettings(ctx, settings, l.filter,
+		l.localResolvers, l.localSubnets, l.resolver, l.failClosed, l.logger)
 	if err != nil {
 		return nil, fmt.Errorf("building server settings: %w", err)
 	}

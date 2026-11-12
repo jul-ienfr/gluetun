@@ -32,4 +32,5 @@ type PublicIPLoop interface {
 
 type Storage interface {
 	GetFilterChoices(provider string) models.FilterChoices
+	GetServers(provider string) []models.Server
 }

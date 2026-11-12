@@ -14,6 +14,7 @@ import (
 
 type Settings struct {
 	ControlServer ControlServer
+	Control       Control
 	DNS           DNS
 	Firewall      Firewall
 	Health        Health
@@ -45,6 +46,7 @@ func (s *Settings) Validate(filterChoicesGetter FilterChoicesGetter, ipv6Support
 ) (err error) {
 	nameToValidation := map[string]func() error{
 		"control server":  s.ControlServer.validate,
+		"control plane":   s.Control.validate,
 		"dns":             s.DNS.validate,
 		"firewall":        s.Firewall.validate,
 		"health":          s.Health.Validate,
@@ -79,6 +81,7 @@ func (s *Settings) Validate(filterChoicesGetter FilterChoicesGetter, ipv6Support
 func (s *Settings) copy() (copied Settings) {
 	return Settings{
 		ControlServer: s.ControlServer.copy(),
+		Control:       s.Control.copy(),
 		DNS:           s.DNS.Copy(),
 		Firewall:      s.Firewall.copy(),
 		Health:        s.Health.copy(),
@@ -104,6 +107,7 @@ func (s *Settings) OverrideWith(other Settings,
 ) (err error) {
 	patchedSettings := s.copy()
 	patchedSettings.ControlServer.overrideWith(other.ControlServer)
+	patchedSettings.Control.overrideWith(other.Control)
 	patchedSettings.DNS.overrideWith(other.DNS)
 	patchedSettings.Firewall.overrideWith(other.Firewall)
 	patchedSettings.Health.OverrideWith(other.Health)
@@ -131,6 +135,7 @@ func (s *Settings) OverrideWith(other Settings,
 
 func (s *Settings) SetDefaults() {
 	s.ControlServer.setDefaults()
+	s.Control.setDefaults()
 	s.DNS.setDefaults()
 	s.Log.setDefaults()
 	s.Firewall.setDefaults(s.Log.Level)
@@ -169,6 +174,7 @@ func (s Settings) toLinesNode() (node *gotree.Node) {
 	node.AppendNode(s.Shadowsocks.toLinesNode())
 	node.AppendNode(s.HTTPProxy.toLinesNode())
 	node.AppendNode(s.ControlServer.toLinesNode())
+	node.AppendNode(s.Control.toLinesNode())
 	node.AppendNode(s.Storage.toLinesNode())
 	node.AppendNode(s.System.toLinesNode())
 	node.AppendNode(s.PublicIP.toLinesNode())
@@ -216,6 +222,7 @@ func (s *Settings) Read(r *reader.Reader, warner Warner) (err error) {
 
 	readFunctions := map[string]func(r *reader.Reader) error{
 		"control server": s.ControlServer.read,
+		"control plane":  s.Control.read,
 		"DNS":            s.DNS.read,
 		"firewall":       s.Firewall.read,
 		"health":         s.Health.Read,

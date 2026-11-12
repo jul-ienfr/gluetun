@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/qdm12/dns/v2/pkg/middlewares/filter/mapfilter"
 	"github.com/qdm12/dns/v2/pkg/server"
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
+	"github.com/qdm12/gluetun/internal/dns/ladder"
 	"github.com/qdm12/gluetun/internal/dns/state"
 	"github.com/qdm12/gluetun/internal/loopstate"
 	"github.com/qdm12/gluetun/internal/models"
@@ -20,6 +22,8 @@ type Loop struct {
 	statusManager  *loopstate.State
 	state          *state.State
 	server         *server.Server
+	resolver       *ladder.Ladder
+	failClosed     bool
 	filter         *mapfilter.Filter
 	localResolvers []netip.Addr
 	localSubnets   []netip.Prefix
@@ -39,7 +43,7 @@ type Loop struct {
 
 const defaultBackoffTime = 10 * time.Second
 
-func NewLoop(settings settings.DNS,
+func NewLoop(settings settings.DNS, ladderOptions LadderOptions,
 	client *http.Client, logger Logger, localSubnets []netip.Prefix,
 ) (loop *Loop, err error) {
 	start := make(chan struct{})
@@ -58,10 +62,27 @@ func NewLoop(settings settings.DNS,
 		return nil, fmt.Errorf("creating map filter: %w", err)
 	}
 
+	var resolver *ladder.Ladder
+	if ladderOptions.applicable() {
+		resolver, err = buildLadder(ladderOptions)
+		if err != nil {
+			return nil, fmt.Errorf("building DNS ladder: %w", err)
+		}
+		if len(ladderOptions.Ladder) == 1 {
+			logger.Warn("DNS ladder has a single tier, no fallback is possible: " +
+				ladderOptions.Ladder[0])
+		} else {
+			logger.Infof("using DNS ladder: %s",
+				strings.Join(ladderOptions.Ladder, ", "))
+		}
+	}
+
 	return &Loop{
 		statusManager: statusManager,
 		state:         state,
 		server:        nil,
+		resolver:      resolver,
+		failClosed:    ladderOptions.FailClosed,
 		filter:        filter,
 		localSubnets:  localSubnets,
 		resolvConf:    "/etc/resolv.conf",

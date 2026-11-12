@@ -376,7 +376,35 @@ func _main(ctx context.Context, buildInfo models.BuildInformation,
 	}
 
 	dnsLogger := logger.New(log.SetComponent("dns"))
-	dnsLooper, err := dns.NewLoop(allSettings.DNS, httpClient,
+	controlEnabled := allSettings.Control.Enabled != nil && *allSettings.Control.Enabled
+	plainAddresses := allSettings.Control.DNS.PlainAddresses
+	if len(plainAddresses) == 0 {
+		plainAddresses = allSettings.DNS.UpstreamPlainAddresses
+	}
+	tierProviders := make(map[string][]string, 2)
+	if len(allSettings.Control.DNS.ProvidersDot) > 0 {
+		tierProviders["dot"] = allSettings.Control.DNS.ProvidersDot
+	}
+	if len(allSettings.Control.DNS.ProvidersDoh) > 0 {
+		tierProviders["doh"] = allSettings.Control.DNS.ProvidersDoh
+	}
+	ladderOptions := dns.LadderOptions{
+		Enabled:            controlEnabled,
+		Ladder:             allSettings.Control.DNS.Ladder,
+		FailClosed:         allSettings.Control.DNS.FailClosed == nil || *allSettings.Control.DNS.FailClosed,
+		ProbeDomain:        allSettings.Control.DNS.ProbeDomain,
+		TierProviders:      tierProviders,
+		DefaultProviders:   allSettings.DNS.Providers,
+		PlainAddresses:     plainAddresses,
+		IPv6:               *allSettings.DNS.IPv6,
+		Timeout:            allSettings.Control.DNS.Timeout,
+		Attempts:           allSettings.Control.DNS.Attempts,
+		FailuresToDown:     allSettings.Control.DNS.FailuresToDown,
+		SuccessesToRecover: allSettings.Control.DNS.SuccessesToRecover,
+		BaseCooldown:       allSettings.Control.DNS.BaseCooldown,
+		MaxCooldown:        allSettings.Control.DNS.MaxCooldown,
+	}
+	dnsLooper, err := dns.NewLoop(allSettings.DNS, ladderOptions, httpClient,
 		dnsLogger, localNetworksToPrefixes(localNetworks))
 	if err != nil {
 		return fmt.Errorf("creating DNS loop: %w", err)
@@ -491,6 +519,7 @@ func _main(ctx context.Context, buildInfo models.BuildInformation,
 	httpServerHandler, httpServerCtx, httpServerDone := goshutdown.NewGoRoutineHandler(
 		"http server", goroutine.OptionTimeout(defaultShutdownTimeout))
 	httpServer, err := server.New(httpServerCtx, allSettings.ControlServer,
+		allSettings.Control,
 		logger.New(log.SetComponent("http server")),
 		buildInfo, vpnLooper, portForwardLooper, dnsLooper, updaterLooper, publicIPLooper,
 		storage, ipv6SupportLevel.IsSupported())

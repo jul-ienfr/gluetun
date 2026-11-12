@@ -17,6 +17,7 @@ import (
 	"github.com/qdm12/dns/v2/pkg/provider"
 	"github.com/qdm12/dns/v2/pkg/server"
 	"github.com/qdm12/gluetun/internal/configuration/settings"
+	"github.com/qdm12/gluetun/internal/dns/ladder"
 )
 
 func (l *Loop) GetSettings() (settings settings.DNS) { return l.state.GetSettings() }
@@ -27,9 +28,11 @@ func (l *Loop) SetSettings(ctx context.Context, settings settings.DNS) (
 	return l.state.SetSettings(ctx, settings)
 }
 
-func buildServerSettings(userSettings settings.DNS,
+func buildServerSettings(ctx context.Context, userSettings settings.DNS,
 	filter *mapfilter.Filter, localResolvers []netip.Addr,
-	localSubnets []netip.Prefix, logger Logger) (
+	localSubnets []netip.Prefix, resolver *ladder.Ladder, failClosed bool,
+	logger Logger,
+) (
 	serverSettings server.Settings, err error,
 ) {
 	serverSettings.Logger = logger
@@ -114,6 +117,13 @@ func buildServerSettings(userSettings settings.DNS,
 	// hostnames that may change regularly.
 	// Place after filter middleware to avoid conflicts with the rebinding protection.
 	serverSettings.Middlewares = append(serverSettings.Middlewares, localDNSMiddleware)
+
+	// The DNS ladder is the innermost middleware so that the cache, filter and
+	// local DNS middlewares keep operating on top of it.
+	if resolver != nil {
+		serverSettings.Middlewares = append(serverSettings.Middlewares,
+			newLadderMiddleware(ctx, resolver, failClosed, logger))
+	}
 
 	return serverSettings, nil
 }

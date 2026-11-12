@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	controlauth "github.com/qdm12/gluetun/internal/control/auth"
 	"github.com/qdm12/gosettings"
 	"github.com/qdm12/gosettings/validate"
 	"github.com/qdm12/gotree"
@@ -100,6 +101,9 @@ type Role struct {
 	Username string `json:"username"`
 	// Password for HTTP Basic authentication method.
 	Password string `json:"password"`
+	// Scope is the optional control plane scope: reader, controller or admin.
+	// When empty, it is inferred from the role name for legacy configurations.
+	Scope string `json:"scope"`
 	// Routes is a list of routes that the role can access in the format
 	// "HTTP_METHOD PATH", for example "GET /v1/vpn/status"
 	Routes []string `json:"-"`
@@ -120,11 +124,16 @@ func (r Role) Validate() (err error) {
 		return fmt.Errorf("for role %s: password is empty", r.Name)
 	}
 
+	_, err = controlauth.ParseScope(r.Scope)
+	if err != nil {
+		return fmt.Errorf("for role %s: %w", r.Name, err)
+	}
+
 	for i, route := range r.Routes {
 		const maxRouteFields = 2
 		parts := strings.SplitN(route, " ", maxRouteFields)
 		method, path := parts[0], parts[1]
-		methods, ok := validRoutes[path]
+		methods, ok := methodsForPath(path)
 		if !ok {
 			return fmt.Errorf("route %d of %d: route path not supported by the control server: %s",
 				i+1, len(r.Routes), path)
@@ -155,6 +164,29 @@ var validRoutes = map[string][]string{ //nolint:gochecknoglobals
 	"/v1/updater/status":        {http.MethodGet, http.MethodPut},
 	"/v1/publicip/ip":           {http.MethodGet},
 	"/v1/portforward":           {http.MethodGet, http.MethodPut},
+	"/v1/control/capabilities":  {http.MethodGet},
+	"/v1/vpn/state":             {http.MethodGet},
+	"/v1/vpn/switch":            {http.MethodPost},
+	"/v1/vpn/rotate":            {http.MethodPost},
+	"/v1/vpn/rollback":          {http.MethodPost},
+	"/v1/vpn/jobs":              {http.MethodGet},
+	"/v1/vpn/jobs/{id}":         {http.MethodGet},
+	"/v1/vpn/jobs/{id}/cancel":  {http.MethodPost},
+	"/v1/vpn/transport":         {http.MethodGet},
+	"/v1/vpn/transport/reset":   {http.MethodPost},
+	"/v1/egress":                {http.MethodGet},
+	"/v1/egress/verify":         {http.MethodGet},
+	"/v1/egress/canary":         {http.MethodGet},
+	"/v1/egress/history":        {http.MethodGet},
+	"/v1/dns/state":             {http.MethodGet},
+	"/v1/dns/tiers":             {http.MethodGet},
+	"/v1/dns/probe":             {http.MethodPost},
+	"/v1/events":                {http.MethodGet},
+	"/v1/events/stream":         {http.MethodGet},
+	"/v1/servers":               {http.MethodGet},
+	"/v1/servers/facets":        {http.MethodGet},
+	"/v1/servers/refresh":       {http.MethodPost},
+	"/v1/servers/{hostname}":    {http.MethodGet},
 }
 
 func countValidRoutes() (count int) {
@@ -164,9 +196,47 @@ func countValidRoutes() (count int) {
 	return count
 }
 
+// methodsForPath returns the allowed methods for a request path. Exact paths
+// are matched first, then route patterns containing {placeholders}.
+func methodsForPath(path string) (methods []string, ok bool) {
+	methods, ok = validRoutes[path]
+	if ok {
+		return methods, true
+	}
+	for routePath, routeMethods := range validRoutes {
+		if routePatternMatches(routePath, path) {
+			return routeMethods, true
+		}
+	}
+	return nil, false
+}
+
+func routePatternMatches(pattern, path string) bool {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+	for i, patternPart := range patternParts {
+		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
+			if pathParts[i] == "" {
+				return false
+			}
+			continue
+		}
+		if patternPart != pathParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (r Role) ToLinesNode() (node *gotree.Node) {
 	node = gotree.New("Role " + r.Name)
 	node.Appendf("Authentication method: %s", r.Auth)
+	if r.Scope != "" {
+		node.Appendf("Scope: %s", r.Scope)
+	}
 	switch r.Auth {
 	case AuthNone:
 	case AuthBasic:

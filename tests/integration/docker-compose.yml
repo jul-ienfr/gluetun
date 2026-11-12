@@ -1,0 +1,147 @@
+name: gluetun-control-plane-harness
+
+x-harness: &harness
+  build:
+    context: ../..
+    dockerfile: tests/integration/Dockerfile
+  restart: unless-stopped
+
+services:
+  plain:
+    <<: *harness
+    command:
+      - dns
+      - -mode=plain
+      - -listen=0.0.0.0:53
+      - -answer=198.51.100.53
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 53"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  dot:
+    <<: *harness
+    command:
+      - dns
+      - -mode=dot
+      - -listen=0.0.0.0:853
+      - -answer=198.51.100.53
+      - -dot-name=dot.test
+      - -ca-out=/certs/ca.crt
+      - -cert-out=/certs/dot.crt
+      - -key-out=/certs/dot.key
+    volumes:
+      - certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 853"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  echo-a:
+    <<: *harness
+    command: ["echo", "-listen=0.0.0.0:8080", "-name=echo-a", "-ip=203.0.113.10"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  echo-b:
+    <<: *harness
+    command: ["echo", "-listen=0.0.0.0:8080", "-name=echo-b", "-ip=203.0.113.11"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  echo-c:
+    <<: *harness
+    command: ["echo", "-listen=0.0.0.0:8080", "-name=echo-c", "-ip=203.0.113.12"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  echo-failing:
+    <<: *harness
+    command:
+      - echo
+      - -listen=0.0.0.0:8080
+      - -name=echo-failing
+      - -ip=203.0.113.99
+      - -fail
+      - -status=503
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  vpn-wg-test:
+    <<: *harness
+    command:
+      - wg
+      - -iface=wgtest0
+      - -listen=0.0.0.0:51820
+      - -tunnel=10.66.0.1/24
+      - -peer=10.66.0.2/32
+      - -http-listen=0.0.0.0:8080
+      - -ip=203.0.113.20
+      - -endpoint=vpn-wg-test:51820
+      - -client-out=/shared/wg0.conf
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - shared:/shared
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /shared/wg0.conf && ip link show wgtest0"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  check:
+    <<: *harness
+    restart: "no"
+    command:
+      - check
+      - -plain=plain:53
+      - -dot=dot:853
+      - -dot-name=dot.test
+      - -ca=/certs/ca.crt
+      - -echo=http://echo-a:8080,http://echo-b:8080,http://echo-c:8080
+      - -expect-ips=203.0.113.10,203.0.113.11,203.0.113.12
+      - -wg-config=/shared/wg0.conf
+      - -wg-echo=http://vpn-wg-test:8080
+      - -wg-ip=203.0.113.20
+      - -wg-tunnel
+      - -wg-tunnel-url=http://10.66.0.1:8080
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - certs:/certs:ro
+      - shared:/shared:ro
+    depends_on:
+      plain:
+        condition: service_healthy
+      dot:
+        condition: service_healthy
+      echo-a:
+        condition: service_healthy
+      echo-b:
+        condition: service_healthy
+      echo-c:
+        condition: service_healthy
+      vpn-wg-test:
+        condition: service_healthy
+
+volumes:
+  certs:
+  shared:

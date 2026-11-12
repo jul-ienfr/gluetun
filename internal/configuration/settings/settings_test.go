@@ -93,6 +93,37 @@ func Test_Settings_String(t *testing.T) {
 |   ├── Listening address: :8000
 |   ├── Logging: yes
 |   └── Authentication file path: /gluetun/auth/config.toml
+├── Control plane settings:
+|   ├── Enabled: yes
+|   ├── State directory: /gluetun/control
+|   ├── State mode: state
+|   ├── Egress verification settings:
+|   |   ├── Enabled: yes
+|   |   ├── Sources: http:ipify, dns:whoami, publicip:internal
+|   |   ├── Quorum: 2
+|   |   ├── Minimum sources: 3
+|   |   ├── Allow single source: no
+|   |   ├── Cache TTL: 10s
+|   |   ├── Source timeout: 1.5s
+|   |   ├── Source backoff: 30s
+|   |   ├── Source maximum backoff: 5m0s
+|   |   ├── IP family: 4
+|   |   ├── Host IP automatic capture: yes
+|   |   └── Allow test networks: no
+|   ├── DNS ladder settings:
+|   |   ├── Ladder: dot, plain
+|   |   ├── Fail closed: yes
+|   |   ├── Redundancy required: no
+|   |   ├── Tier timeout: 800ms
+|   |   ├── Tier attempts: 2
+|   |   ├── Health failures to down: 3
+|   |   ├── Health successes to recover: 2
+|   |   ├── Health cooldown: 5s
+|   |   ├── Health cooldown maximum: 5m0s
+|   |   ├── Probe interval: 30s
+|   |   └── Probe domain: example.com
+|   └── Canary settings:
+|       └── Enabled: no
 ├── Storage settings:
 |   └── Servers directory path: /gluetun/servers/
 ├── OS Alpine settings:

@@ -49,6 +49,28 @@ func (s *Storage) SetServers(provider string, servers []models.Server) (err erro
 	return nil
 }
 
+// GetServers returns a deep copy of all servers for the provider given.
+// It returns nil when the provider is unknown instead of panicking.
+func (s *Storage) GetServers(provider string) []models.Server {
+	if provider == providers.Custom {
+		return nil
+	}
+
+	s.mergedMutex.RLock()
+	defer s.mergedMutex.RUnlock()
+
+	serversObject, ok := s.mergedServers.ProviderToServers[provider]
+	if !ok {
+		return nil
+	}
+
+	servers := make([]models.Server, len(serversObject.Servers))
+	for index, server := range serversObject.Servers {
+		servers[index] = copyServer(server)
+	}
+	return servers
+}
+
 // GetServersCount returns the number of servers for the provider given.
 func (s *Storage) GetServersCount(provider string) (count int) {
 	if provider == providers.Custom {

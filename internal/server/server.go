@@ -12,27 +12,29 @@ import (
 	"github.com/qdm12/gluetun/internal/server/middlewares/auth"
 )
 
-func New(ctx context.Context, settings settings.ControlServer, logger Logger,
+func New(ctx context.Context, controlServerSettings settings.ControlServer,
+	controlSettings settings.Control, logger Logger,
 	buildInfo models.BuildInformation, openvpnLooper VPNLooper,
 	pf PortForwarding, dnsLooper DNSLoop,
 	updaterLooper UpdaterLooper, publicIPLooper PublicIPLoop, storage Storage,
 	ipv6Supported bool) (
 	server *httpserver.Server, err error,
 ) {
-	authSettings, err := setupAuthMiddleware(settings.AuthFilePath, settings.AuthDefaultRole, logger)
+	authSettings, err := setupAuthMiddleware(controlServerSettings.AuthFilePath,
+		controlServerSettings.AuthDefaultRole, logger)
 	if err != nil {
 		return nil, fmt.Errorf("building authentication middleware settings: %w", err)
 	}
 
-	handler, err := newHandler(ctx, logger, *settings.Log, authSettings, buildInfo,
-		openvpnLooper, pf, dnsLooper, updaterLooper, publicIPLooper,
+	handler, err := newHandler(ctx, logger, *controlServerSettings.Log, authSettings,
+		controlSettings, buildInfo, openvpnLooper, pf, dnsLooper, updaterLooper, publicIPLooper,
 		storage, ipv6Supported)
 	if err != nil {
 		return nil, fmt.Errorf("creating handler: %w", err)
 	}
 
 	httpServerSettings := httpserver.Settings{
-		Address: *settings.Address,
+		Address: *controlServerSettings.Address,
 		Handler: handler,
 		Logger:  logger,
 	}
