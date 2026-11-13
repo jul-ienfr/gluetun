@@ -273,6 +273,8 @@ func Test_Executor_Switch_Gates(t *testing.T) {
 			request: testSwitchRequest,
 			verifications: []egress.Verification{
 				{Verified: false},
+				{Verified: false},
+				{Verified: false},
 				verifiedIP("198.51.100.7"),
 			},
 			wantState: StateRolledBack,
@@ -454,11 +456,14 @@ func Test_Executor_ExecuteRollback_NoSnapshot(t *testing.T) {
 	}
 }
 
-func Test_Executor_ExecuteRollback_Unproven(t *testing.T) {
+func Test_Executor_ExecuteRollback_UnprovenBaseline(t *testing.T) {
 	t.Parallel()
 
 	tunnel := &fakeTunnel{}
-	executor, _ := newTestExecutor(t, tunnel, &fakeVerifier{}, switchProber{})
+	verifier := &fakeVerifier{results: []egress.Verification{
+		verifiedIP("198.51.100.7"),
+	}}
+	executor, _ := newTestExecutor(t, tunnel, verifier, switchProber{})
 	snapshot := executorSnapshot()
 	snapshot.Egress = nil
 	machine := NewMachine(Job{
@@ -470,13 +475,13 @@ func Test_Executor_ExecuteRollback_Unproven(t *testing.T) {
 	}, testTime)
 
 	result, err := executor.ExecuteRollback(t.Context(), machine)
-	if !errors.Is(err, ErrRollbackUnproven) {
-		t.Fatalf("error = %v, want %v", err, ErrRollbackUnproven)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Job.State != StateFailedDegraded {
-		t.Errorf("state = %q, want failed_degraded", result.Job.State)
+	if result.Job.State != StateRolledBack {
+		t.Errorf("state = %q, want rolled_back", result.Job.State)
 	}
-	if len(tunnel.applied) != 0 {
-		t.Errorf("apply calls = %d, want 0", len(tunnel.applied))
+	if len(tunnel.applied) != 1 {
+		t.Errorf("apply calls = %d, want 1", len(tunnel.applied))
 	}
 }

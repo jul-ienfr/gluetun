@@ -286,6 +286,18 @@ func applySnapshotToSettings(current settings.VPN,
 		current.Provider.Name = snapshot.Settings.Provider
 	}
 	hostnames := snapshotHostnames(snapshot)
+	if len(hostnames) > 0 {
+		// A pinned hostname is exclusive: stale country, region, city, ISP or
+		// category filters from the previous target would exclude it from the
+		// server lookup. The snapshot is authoritative for those filters.
+		selection := &current.Provider.ServerSelection
+		selection.Countries = append([]string(nil), snapshot.Settings.Countries...)
+		selection.Regions = append([]string(nil), snapshot.Settings.Regions...)
+		selection.Cities = append([]string(nil), snapshot.Settings.Cities...)
+		selection.ISPs = append([]string(nil), snapshot.Settings.ISPs...)
+		selection.Categories = append([]string(nil),
+			snapshot.Settings.Categories...)
+	}
 
 	transport := snapshot.TransportDetail
 	if transport == "" {

@@ -416,7 +416,8 @@ func (e *Executor) Execute(ctx context.Context, machine *Machine,
 	verifyRequest := request.Options.Verify
 	verifyRequest.Fresh = true
 	verifyCtx, cancelVerify := context.WithTimeout(ctx, e.verifyTimeout)
-	verification, err := e.verifier.Verify(verifyCtx, verifyRequest)
+	verification, err := verifyEgressUntilVerified(verifyCtx, e.verifier,
+		verifyRequest)
 	cancelVerify()
 	if err != nil {
 		return e.failAfterApply(ctx, machine, request,

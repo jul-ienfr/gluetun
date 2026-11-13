@@ -185,7 +185,7 @@ func Test_Rollback_Run(t *testing.T) {
 			expectedErr:     ErrRollbackUnproven,
 			expectedState:   StateFailedDegraded,
 			expectedEvent:   EventFailedDegraded,
-			expectedCalls:   []string{"apply", "await", "verify"},
+			expectedCalls:   []string{"apply", "await", "verify", "verify", "verify"},
 			expectedProven:  false,
 			expectedApplied: true,
 		},
@@ -210,12 +210,12 @@ func Test_Rollback_Run(t *testing.T) {
 				snapshot.Egress = nil
 				return &snapshot
 			}(),
-			expectedErr:     ErrRollbackUnproven,
-			expectedState:   StateFailedDegraded,
-			expectedEvent:   EventFailedDegraded,
-			expectedCalls:   []string{},
-			expectedProven:  false,
-			expectedApplied: false,
+			verification:    *testRollbackSnapshot().Egress,
+			expectedState:   StateRolledBack,
+			expectedEvent:   EventRolledBack,
+			expectedCalls:   []string{"apply", "await", "verify"},
+			expectedProven:  true,
+			expectedApplied: true,
 		},
 		"snapshot egress never verified": {
 			state: StateApplying,
@@ -224,12 +224,12 @@ func Test_Rollback_Run(t *testing.T) {
 				snapshot.Egress = &egress.Verification{Verified: false}
 				return &snapshot
 			}(),
-			expectedErr:     ErrRollbackUnproven,
-			expectedState:   StateFailedDegraded,
-			expectedEvent:   EventFailedDegraded,
-			expectedCalls:   []string{},
-			expectedProven:  false,
-			expectedApplied: false,
+			verification:    *testRollbackSnapshot().Egress,
+			expectedState:   StateRolledBack,
+			expectedEvent:   EventRolledBack,
+			expectedCalls:   []string{"apply", "await", "verify"},
+			expectedProven:  true,
+			expectedApplied: true,
 		},
 		"snapshot egress IP missing": {
 			state: StateApplying,
@@ -238,12 +238,12 @@ func Test_Rollback_Run(t *testing.T) {
 				snapshot.Egress = &egress.Verification{Verified: true}
 				return &snapshot
 			}(),
-			expectedErr:     ErrRollbackUnproven,
-			expectedState:   StateFailedDegraded,
-			expectedEvent:   EventFailedDegraded,
-			expectedCalls:   []string{},
-			expectedProven:  false,
-			expectedApplied: false,
+			verification:    *testRollbackSnapshot().Egress,
+			expectedState:   StateRolledBack,
+			expectedEvent:   EventRolledBack,
+			expectedCalls:   []string{"apply", "await", "verify"},
+			expectedProven:  true,
+			expectedApplied: true,
 		},
 		"no snapshot": {
 			state:           StateApplying,

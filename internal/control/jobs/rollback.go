@@ -115,15 +115,11 @@ func (r *Rollback) Run(ctx context.Context, machine *Machine) (
 	}
 	snapshot := *job.SnapshotBefore
 	result.Snapshot = snapshot
+	hasBaselineEgress := snapshotEgressProven(snapshot)
 
 	err = enterRollback(machine)
 	if err != nil {
 		return RollbackResult{}, err
-	}
-
-	err = verifyExpectedEgress(snapshot)
-	if err != nil {
-		return r.degrade(machine, result, err)
 	}
 
 	applyCtx, cancel := context.WithTimeout(ctx, r.applyTimeout)
@@ -144,7 +140,7 @@ func (r *Rollback) Run(ctx context.Context, machine *Machine) (
 	}
 
 	verifyCtx, cancel := context.WithTimeout(ctx, r.verifyTimeout)
-	verification, err := r.verifier.Verify(verifyCtx,
+	verification, err := verifyEgressUntilVerified(verifyCtx, r.verifier,
 		verify.Request{Fresh: true})
 	cancel()
 	if err != nil {
@@ -153,9 +149,15 @@ func (r *Rollback) Run(ctx context.Context, machine *Machine) (
 	}
 	result.Verification = verification
 
-	err = compareEgress(snapshot, verification)
-	if err != nil {
-		return r.degrade(machine, result, err)
+	if !verification.Verified {
+		return r.degrade(machine, result, fmt.Errorf(
+			"%w: fresh egress is not verified", ErrRollbackUnproven))
+	}
+	if hasBaselineEgress {
+		err = compareEgress(snapshot, verification)
+		if err != nil {
+			return r.degrade(machine, result, err)
+		}
 	}
 
 	result.Proven = true
@@ -185,20 +187,9 @@ func enterRollback(machine *Machine) error {
 		machine.Job().State)
 }
 
-func verifyExpectedEgress(snapshot state.TunnelSnapshot) error {
-	if snapshot.Egress == nil {
-		return fmt.Errorf("%w: snapshot has no egress verification",
-			ErrRollbackUnproven)
-	}
-	if !snapshot.Egress.Verified {
-		return fmt.Errorf("%w: snapshot egress was never verified",
-			ErrRollbackUnproven)
-	}
-	if !snapshot.Egress.IP.IsValid() {
-		return fmt.Errorf("%w: snapshot egress IP is missing",
-			ErrRollbackUnproven)
-	}
-	return nil
+func snapshotEgressProven(snapshot state.TunnelSnapshot) bool {
+	return snapshot.Egress != nil && snapshot.Egress.Verified &&
+		snapshot.Egress.IP.IsValid()
 }
 
 func compareEgress(snapshot state.TunnelSnapshot,

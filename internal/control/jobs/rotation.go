@@ -410,7 +410,8 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		verifyRequest := request.Options.Verify
 		verifyRequest.Fresh = true
 		verifyCtx, cancelVerify := context.WithTimeout(ctx, e.verifyTimeout)
-		verification, verifyErr := e.verifier.Verify(verifyCtx, verifyRequest)
+		verification, verifyErr := verifyEgressUntilVerified(verifyCtx, e.verifier,
+			verifyRequest)
 		cancelVerify()
 		if verifyErr != nil {
 			lastErr = fmt.Errorf("verifying rotation candidate: %w", verifyErr)
