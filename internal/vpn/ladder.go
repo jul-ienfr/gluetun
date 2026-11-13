@@ -11,6 +11,7 @@ import (
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
 	"github.com/qdm12/gluetun/internal/constants/vpn"
+	"github.com/qdm12/gluetun/internal/egress"
 	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/models"
 	transportpkg "github.com/qdm12/gluetun/internal/vpn/transport"
@@ -383,24 +384,45 @@ func (d *ladderDriver) VerifyEgress(ctx context.Context) (netip.Addr, error) {
 		return netip.Addr{}, transportpkg.NewFailure(transportpkg.ReasonNoEgress,
 			errors.New("egress verification is not configured"))
 	}
-	verification, err := verifier.Verify(ctx, verify.Request{Fresh: true})
-	if err != nil {
-		return netip.Addr{}, transportpkg.NewFailure(transportpkg.ReasonNoEgress, err)
-	}
-	if !verification.Verified || !verification.IP.IsValid() {
-		message := "egress verification failed"
-		if verification.Reason != nil {
-			message += ": " + string(*verification.Reason)
+
+	const attempts = 3
+	const retryDelay = time.Second
+	var lastVerification egress.Verification
+	var lastErr error
+	for attempt := range attempts {
+		verification, err := verifier.Verify(ctx, verify.Request{Fresh: true})
+		if err == nil && verification.Verified && verification.IP.IsValid() {
+			d.mutex.Lock()
+			d.lastVerified = time.Now()
+			d.mutex.Unlock()
+			return verification.IP, nil
 		}
-		return netip.Addr{}, transportpkg.NewFailure(transportpkg.ReasonNoEgress,
-			errors.New(message))
+		lastVerification = verification
+		lastErr = err
+		if attempt == attempts-1 || ctx.Err() != nil {
+			break
+		}
+		// The tunnel is up but DNS or the public-IP provider may still be
+		// starting. A single probe tore down working tunnels; retry inside
+		// the same bounded attempt budget instead.
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
 	}
 
-	d.mutex.Lock()
-	d.lastVerified = time.Now()
-	d.mutex.Unlock()
-
-	return verification.IP, nil
+	if lastErr != nil {
+		return netip.Addr{}, transportpkg.NewFailure(transportpkg.ReasonNoEgress,
+			lastErr)
+	}
+	message := "egress verification failed"
+	if lastVerification.Reason != nil {
+		message += ": " + string(*lastVerification.Reason)
+	}
+	return netip.Addr{}, transportpkg.NewFailure(transportpkg.ReasonNoEgress,
+		errors.New(message))
 }
 
 func (d *ladderDriver) Health(_ context.Context, _ transportpkg.Transport,
