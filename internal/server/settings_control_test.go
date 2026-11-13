@@ -32,8 +32,9 @@ func Test_ControlledSettingsDelegatesToControlPlane(t *testing.T) {
 	response := serveSettingsBody(t, true,
 		`{"target":{"hostname":"new.example.com"}}`)
 
-	// The control plane is mounted but the real jobs service is not wired yet.
-	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	// The control plane is mounted and delegates to the switch jobs, which
+	// reject the unknown target before touching the tunnel.
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code)
 
 	var body struct {
 		Error struct {
@@ -41,7 +42,7 @@ func Test_ControlledSettingsDelegatesToControlPlane(t *testing.T) {
 		} `json:"error"`
 	}
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
-	assert.Equal(t, "not_ready", body.Error.Code)
+	assert.Equal(t, "invalid_target", body.Error.Code)
 }
 
 func Test_LegacySettingsKeepsUpstreamHandler(t *testing.T) {

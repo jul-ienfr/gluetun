@@ -337,11 +337,12 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		}
 
 		machine.SetTarget(Target{
-			Provider:   proven.Provider,
-			VPN:        transportVPNType(proven.Transport),
-			Hostname:   proven.Hostname,
-			EndpointIP: proven.EndpointIP,
-			Port:       proven.Port,
+			Provider:        proven.Provider,
+			VPN:             transportVPNType(proven.Transport),
+			TransportDetail: string(proven.Transport),
+			Hostname:        proven.Hostname,
+			EndpointIP:      proven.EndpointIP,
+			Port:            proven.Port,
 		})
 
 		err = machine.Transition(StateDraining)

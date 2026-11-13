@@ -35,18 +35,8 @@ func newHandler(ctx context.Context, logger Logger, logging bool,
 		if err != nil {
 			return nil, fmt.Errorf("getting station hostname: %w", err)
 		}
-		var egressService api.EgressService
-		egress := newEgressService(controlSettings, publicIPLooper, logger)
-		if egress != nil {
-			egressService = egress
-		}
-		controlHandler = api.New(controlSettings, buildInfo, stationID,
-			egressService, nil)
-		controlHandler.SetCatalog(newCatalog(storage,
-			vpnLooper.GetSettings().Provider.Name))
-		if dnsService, ok := dnsLooper.(api.DNSService); ok {
-			controlHandler.SetDNS(dnsService)
-		}
+		controlHandler = newControlHandler(logger, controlSettings, buildInfo,
+			stationID, vpnLooper, dnsLooper, publicIPLooper, storage)
 	}
 
 	vpn := newVPNHandler(ctx, vpnLooper, storage, ipv6Supported, logger,

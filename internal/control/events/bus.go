@@ -1,6 +1,7 @@
 package events
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,6 +145,33 @@ func (b *Bus) Subscribe(since uint64) *Subscription {
 // LastSeq returns the last sequence number published.
 func (b *Bus) LastSeq() uint64 {
 	return b.seq.Current()
+}
+
+// Restore seeds the bus with persisted events. It fills the replay buffer and
+// moves the sequence forward without notifying subscribers.
+func (b *Bus) Restore(history []Event) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	if b.closed {
+		return
+	}
+	slices.SortFunc(history, func(a, c Event) int {
+		switch {
+		case a.Seq < c.Seq:
+			return -1
+		case a.Seq > c.Seq:
+			return 1
+		}
+		return 0
+	})
+	for _, event := range history {
+		if event.Seq == 0 {
+			continue
+		}
+		b.appendLocked(event)
+		b.seq.Restore(event.Seq)
+	}
 }
 
 // Page is one page of retained events.

@@ -166,6 +166,21 @@ func Test_DesiredStateValidateContent(t *testing.T) {
 				state.Current = &snapshot
 			},
 		},
+		"snapshot unknown transport detail": {
+			mutate: func(state *DesiredState) {
+				snapshot := testSnapshot()
+				snapshot.TransportDetail = "bogus"
+				state.Current = &snapshot
+			},
+		},
+		"snapshot transport detail mismatch": {
+			mutate: func(state *DesiredState) {
+				snapshot := testSnapshot()
+				snapshot.Transport = "wireguard"
+				snapshot.TransportDetail = "openvpn-tcp"
+				state.Current = &snapshot
+			},
+		},
 		"snapshot unknown VPN status": {
 			mutate: func(state *DesiredState) {
 				snapshot := testSnapshot()
@@ -371,6 +386,37 @@ func Test_TunnelSettingsMergedWith(t *testing.T) {
 
 			merged := testCase.explicit.mergedWith(environment)
 			assert.True(t, merged.Equal(testCase.expected))
+		})
+	}
+}
+
+func Test_TunnelSnapshot_TransportDetailValid(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		transport string
+		detail    string
+	}{
+		"openvpn udp":            {transport: "openvpn", detail: "openvpn-udp"},
+		"openvpn tcp":            {transport: "openvpn", detail: "openvpn-tcp"},
+		"wireguard":              {transport: "wireguard", detail: "wireguard"},
+		"openvpn without detail": {transport: "openvpn"},
+		"empty":                  {},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			snapshot := testSnapshot()
+			snapshot.Transport = testCase.transport
+			snapshot.TransportDetail = testCase.detail
+
+			state := testDesiredState(t)
+			state.Current = &snapshot
+			sealed, err := Seal(state)
+			require.NoError(t, err)
+			assert.NoError(t, sealed.Validate())
 		})
 	}
 }

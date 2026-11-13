@@ -28,6 +28,7 @@ type Handler struct {
 	dns       DNSService
 	transport TransportService
 	eventBus  *events.Bus
+	state     StateService
 	routes    []route
 	now       func() time.Time
 
@@ -53,7 +54,7 @@ func New(control settings.Control, buildInfo models.BuildInformation,
 
 	handler.routes = []route{
 		{http.MethodGet, "/control/capabilities", handler.getCapabilities},
-		{http.MethodGet, "/vpn/state", handler.notImplemented},
+		{http.MethodGet, "/vpn/state", handler.getVPNState},
 		{http.MethodPost, "/vpn/switch", handler.postSwitch},
 		{http.MethodPost, "/vpn/rotate", handler.postRotate},
 		{http.MethodPost, "/vpn/rollback", handler.postRollback},
@@ -98,6 +99,11 @@ func (h *Handler) SetTransport(service TransportService) {
 // SetEvents attaches the event bus to the handler.
 func (h *Handler) SetEvents(bus *events.Bus) {
 	h.eventBus = bus
+}
+
+// SetState attaches the in-memory station state reader.
+func (h *Handler) SetState(service StateService) {
+	h.state = service
 }
 
 // Handles returns true if the path matches a control plane route.
@@ -197,6 +203,10 @@ func (h *Handler) capabilities() Capabilities {
 	capabilities.Features.TransportLadder = h.transport != nil
 	capabilities.Features.EgressConsensus =
 		capabilities.Features.EgressConsensus && h.egress != nil
+	capabilities.Features.EventsSSE = h.eventBus != nil
+	capabilities.Features.StatePersistence =
+		h.state != nil && h.control.StateDir != ""
+	capabilities.Features.SecretReveal = true
 	return capabilities
 }
 

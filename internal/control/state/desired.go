@@ -84,19 +84,20 @@ type DNSState struct {
 
 // TunnelSnapshot is a complete, restorable picture of a station.
 type TunnelSnapshot struct {
-	SchemaVersion  int                  `json:"schema_version"`
-	StationID      string               `json:"station_id"`
-	TakenAt        time.Time            `json:"taken_at"`
-	Trigger        string               `json:"trigger"`
-	Settings       TunnelSettings       `json:"settings"`
-	ServerHostname string               `json:"server_hostname,omitempty"`
-	EndpointIP     netip.Addr           `json:"endpoint_ip,omitempty"`
-	Transport      string               `json:"transport,omitempty"`
-	Interface      string               `json:"interface,omitempty"`
-	VPNStatus      string               `json:"vpn_status,omitempty"`
-	Egress         *egress.Verification `json:"egress,omitempty"`
-	DNS            *DNSState            `json:"dns,omitempty"`
-	ProvenAt       *time.Time           `json:"proven_at,omitempty"`
+	SchemaVersion   int                  `json:"schema_version"`
+	StationID       string               `json:"station_id"`
+	TakenAt         time.Time            `json:"taken_at"`
+	Trigger         string               `json:"trigger"`
+	Settings        TunnelSettings       `json:"settings"`
+	ServerHostname  string               `json:"server_hostname,omitempty"`
+	EndpointIP      netip.Addr           `json:"endpoint_ip,omitempty"`
+	Transport       string               `json:"transport,omitempty"`
+	TransportDetail string               `json:"transport_detail,omitempty"`
+	Interface       string               `json:"interface,omitempty"`
+	VPNStatus       string               `json:"vpn_status,omitempty"`
+	Egress          *egress.Verification `json:"egress,omitempty"`
+	DNS             *DNSState            `json:"dns,omitempty"`
+	ProvenAt        *time.Time           `json:"proven_at,omitempty"`
 }
 
 // DesiredState is the persistent, versioned and checksummed control state.
@@ -255,6 +256,20 @@ func (s TunnelSnapshot) validate() error {
 	}
 	if !slices.Contains([]string{"", "openvpn", "wireguard"}, s.Transport) {
 		return fmt.Errorf("unknown transport %q", s.Transport)
+	}
+	switch s.TransportDetail {
+	case "", "wireguard":
+		if s.Transport == "openvpn" && s.TransportDetail != "" {
+			return fmt.Errorf("transport detail %q does not match transport %q",
+				s.TransportDetail, s.Transport)
+		}
+	case "openvpn-udp", "openvpn-tcp":
+		if s.Transport == "wireguard" {
+			return fmt.Errorf("transport detail %q does not match transport %q",
+				s.TransportDetail, s.Transport)
+		}
+	default:
+		return fmt.Errorf("unknown transport detail %q", s.TransportDetail)
 	}
 	if !slices.Contains([]string{"", "running", "stopped", "unknown"}, s.VPNStatus) {
 		return fmt.Errorf("unknown VPN status %q", s.VPNStatus)

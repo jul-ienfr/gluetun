@@ -58,3 +58,8 @@ type TransportService interface {
 	TransportPolicy() transportpkg.Policy
 	ResetTransport(target *transportpkg.Transport) error
 }
+
+// StateService serves the in-memory station state.
+type StateService interface {
+	VPNState() VPNState
+}

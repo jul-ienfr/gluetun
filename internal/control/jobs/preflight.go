@@ -90,11 +90,12 @@ type Prober interface {
 
 // Target is the normalized switch target validated by the preflight.
 type Target struct {
-	Provider   string     `json:"provider,omitempty"`
-	VPN        string     `json:"vpn,omitempty"`
-	Hostname   string     `json:"hostname,omitempty"`
-	EndpointIP netip.Addr `json:"endpoint_ip,omitempty"`
-	Port       uint16     `json:"port,omitempty"`
+	Provider        string     `json:"provider,omitempty"`
+	VPN             string     `json:"vpn,omitempty"`
+	TransportDetail string     `json:"transport_detail,omitempty"`
+	Hostname        string     `json:"hostname,omitempty"`
+	EndpointIP      netip.Addr `json:"endpoint_ip,omitempty"`
+	Port            uint16     `json:"port,omitempty"`
 }
 
 // PreflightSettings configure the preflight checker.

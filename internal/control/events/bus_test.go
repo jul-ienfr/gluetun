@@ -131,6 +131,37 @@ func Test_Bus_RecentFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func Test_Bus_RestoreSeedsReplayAndSequence(t *testing.T) {
+	t.Parallel()
+
+	bus := newTestBus(Options{Buffer: 4})
+	bus.Restore([]Event{
+		{Seq: 2, Type: "second"},
+		{Seq: 1, Type: "first"},
+		{Seq: 3, Type: "third"},
+	})
+
+	if bus.LastSeq() != 3 {
+		t.Fatalf("last sequence = %d, want 3", bus.LastSeq())
+	}
+	page := bus.Recent(0, "", 10)
+	want := []uint64{1, 2, 3}
+	if len(page.Items) != len(want) {
+		t.Fatalf("restored items = %+v", page.Items)
+	}
+	for index, wantSeq := range want {
+		if page.Items[index].Seq != wantSeq {
+			t.Fatalf("item %d sequence = %d, want %d",
+				index, page.Items[index].Seq, wantSeq)
+		}
+	}
+
+	published := bus.Publish(Event{Type: "fourth"})
+	if published.Seq != 4 {
+		t.Fatalf("published sequence = %d, want 4", published.Seq)
+	}
+}
+
 func Test_Bus_SlowSubscriberDropsWithoutBlocking(t *testing.T) {
 	t.Parallel()
 

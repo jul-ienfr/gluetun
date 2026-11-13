@@ -348,11 +348,12 @@ func (e *Executor) Execute(ctx context.Context, machine *Machine,
 		return result, err
 	}
 	machine.SetTarget(Target{
-		Provider:   inspection.Preflight.Provider,
-		VPN:        transportVPNType(inspection.Preflight.Transport),
-		Hostname:   inspection.Preflight.Hostname,
-		EndpointIP: inspection.Preflight.EndpointIP,
-		Port:       inspection.Preflight.Port,
+		Provider:        inspection.Preflight.Provider,
+		VPN:             transportVPNType(inspection.Preflight.Transport),
+		TransportDetail: string(inspection.Preflight.Transport),
+		Hostname:        inspection.Preflight.Hostname,
+		EndpointIP:      inspection.Preflight.EndpointIP,
+		Port:            inspection.Preflight.Port,
 	})
 	machine.SetSnapshotBefore(inspection.SnapshotBefore)
 
@@ -642,9 +643,10 @@ func (e *Executor) targetSnapshot(request SwitchRequest,
 			VPN:       transportVPNType(result.Transport),
 			Hostnames: []string{result.Hostname},
 		},
-		ServerHostname: result.Hostname,
-		EndpointIP:     result.EndpointIP,
-		Transport:      transportVPNType(result.Transport),
+		ServerHostname:  result.Hostname,
+		EndpointIP:      result.EndpointIP,
+		Transport:       transportVPNType(result.Transport),
+		TransportDetail: string(result.Transport),
 	}
 }
 

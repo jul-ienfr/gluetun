@@ -61,8 +61,14 @@ type Page struct {
 
 // ManagerSettings configure the job manager.
 type ManagerSettings struct {
-	Executor          *Executor
-	Catalog           CandidateSource
+	Executor *Executor
+	Catalog  CandidateSource
+	// LastCommitted restores the committed snapshot from the persisted state so
+	// a rollback remains possible after a restart.
+	LastCommitted *state.TunnelSnapshot
+	// OnCommit receives every committed snapshot. It is optional and must not
+	// block for long.
+	OnCommit          func(job Job, snapshot state.TunnelSnapshot)
 	Retention         int
 	IdempotencyWindow time.Duration
 	Now               func() time.Time
@@ -81,12 +87,14 @@ type Manager struct {
 	now         func() time.Time
 	idempotency *Idempotency
 
-	mutex         sync.Mutex
-	entries       map[string]*jobEntry
-	order         []string
-	activeJobID   string
-	lastCommitted *state.TunnelSnapshot
-	sequence      uint64
+	mutex           sync.Mutex
+	entries         map[string]*jobEntry
+	order           []string
+	activeJobID     string
+	lastCommitted   *state.TunnelSnapshot
+	lastCommittedID string
+	onCommit        func(job Job, snapshot state.TunnelSnapshot)
+	sequence        uint64
 }
 
 type jobEntry struct {
@@ -120,13 +128,23 @@ func NewManager(settings ManagerSettings) *Manager {
 		window = DefaultIdempotencyWindow
 	}
 	return &Manager{
-		executor:    settings.Executor,
-		catalog:     settings.Catalog,
-		retention:   retention,
-		now:         now,
-		idempotency: NewIdempotency(window, now),
-		entries:     make(map[string]*jobEntry),
+		executor:      settings.Executor,
+		catalog:       settings.Catalog,
+		retention:     retention,
+		now:           now,
+		idempotency:   NewIdempotency(window, now),
+		entries:       make(map[string]*jobEntry),
+		lastCommitted: cloneSnapshot(settings.LastCommitted),
+		onCommit:      settings.OnCommit,
 	}
+}
+
+func cloneSnapshot(snapshot *state.TunnelSnapshot) *state.TunnelSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	cloned := *snapshot
+	return &cloned
 }
 
 // Submit validates and queues a switch or rotate job.
@@ -476,23 +494,53 @@ func (m *Manager) finish(entry *jobEntry) {
 	job := entry.machine.Job()
 
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
 
 	if m.activeJobID == job.ID {
 		m.activeJobID = ""
 	}
+	var committed *state.TunnelSnapshot
 	if job.State == StateCommitted {
-		snapshot := m.committedSnapshot(job)
-		if snapshot != nil {
-			m.lastCommitted = snapshot
+		committed = m.committedSnapshot(job)
+		if committed != nil {
+			m.lastCommitted = committed
+			m.lastCommittedID = job.ID
 		}
 	}
 	m.pruneLocked()
+	onCommit := m.onCommit
+	m.mutex.Unlock()
+
+	if committed != nil && onCommit != nil {
+		onCommit(job, *committed)
+	}
+
+	m.mutex.Lock()
 	select {
 	case <-entry.done:
 	default:
 		close(entry.done)
 	}
+	m.mutex.Unlock()
+}
+
+// ActiveJobID returns the identifier of the running job, or an empty string.
+func (m *Manager) ActiveJobID() string {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.activeJobID
+}
+
+// LastCommitted returns the last committed snapshot and the job which produced
+// it.
+func (m *Manager) LastCommitted() (snapshot state.TunnelSnapshot, jobID string,
+	found bool,
+) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	if m.lastCommitted == nil {
+		return state.TunnelSnapshot{}, "", false
+	}
+	return *m.lastCommitted, m.lastCommittedID, true
 }
 
 func (m *Manager) committedSnapshot(job Job) *state.TunnelSnapshot {
@@ -514,11 +562,12 @@ func (m *Manager) committedSnapshot(job Job) *state.TunnelSnapshot {
 			VPN:       job.Target.VPN,
 			Hostnames: []string{job.Target.Hostname},
 		},
-		ServerHostname: job.Target.Hostname,
-		EndpointIP:     job.Target.EndpointIP,
-		Transport:      job.Target.VPN,
-		Egress:         job.Verification,
-		ProvenAt:       &now,
+		ServerHostname:  job.Target.Hostname,
+		EndpointIP:      job.Target.EndpointIP,
+		Transport:       job.Target.VPN,
+		TransportDetail: job.Target.TransportDetail,
+		Egress:          job.Verification,
+		ProvenAt:        &now,
 	}
 }
 
@@ -564,11 +613,12 @@ func (m *Manager) newEntryLocked(request SwitchRequest,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Target: Target{
-			Provider:   inspection.Preflight.Provider,
-			VPN:        transportVPNType(inspection.Preflight.Transport),
-			Hostname:   inspection.Preflight.Hostname,
-			EndpointIP: inspection.Preflight.EndpointIP,
-			Port:       inspection.Preflight.Port,
+			Provider:        inspection.Preflight.Provider,
+			VPN:             transportVPNType(inspection.Preflight.Transport),
+			TransportDetail: string(inspection.Preflight.Transport),
+			Hostname:        inspection.Preflight.Hostname,
+			EndpointIP:      inspection.Preflight.EndpointIP,
+			Port:            inspection.Preflight.Port,
 		},
 		Candidates:     slices.Clone(request.Candidates),
 		IdempotencyKey: request.IdempotencyKey,
@@ -615,10 +665,11 @@ func (m *Manager) newRollbackEntryLocked(snapshot state.TunnelSnapshot,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Target: Target{
-			Provider:   snapshot.Settings.Provider,
-			VPN:        snapshot.Transport,
-			Hostname:   snapshot.ServerHostname,
-			EndpointIP: snapshot.EndpointIP,
+			Provider:        snapshot.Settings.Provider,
+			VPN:             snapshot.Transport,
+			TransportDetail: snapshot.TransportDetail,
+			Hostname:        snapshot.ServerHostname,
+			EndpointIP:      snapshot.EndpointIP,
 		},
 		SnapshotBefore: &snapshot,
 		IdempotencyKey: request.IdempotencyKey,

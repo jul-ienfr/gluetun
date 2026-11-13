@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qdm12/gluetun/internal/control/state"
 	"github.com/qdm12/gluetun/internal/egress"
 )
 
@@ -68,6 +69,81 @@ func Test_Manager_SubmitAndRollback(t *testing.T) {
 	if rollbackJob.State != StateRolledBack {
 		t.Fatalf("rollback state = %q, want rolled_back",
 			rollbackJob.State)
+	}
+}
+
+func Test_Manager_RestoresLastCommittedAndNotifiesOnCommit(t *testing.T) {
+	t.Parallel()
+
+	restored := state.TunnelSnapshot{
+		SchemaVersion:   state.SchemaVersion,
+		StationID:       "station-1",
+		ServerHostname:  "old.example.com",
+		TransportDetail: "openvpn-udp",
+	}
+	committed := make(chan Job, 1)
+	snapshots := make(chan state.TunnelSnapshot, 1)
+	verifier := &fakeVerifier{results: []egress.Verification{
+		verifiedIP("198.51.100.8"),
+	}}
+	manager := newTestManager(t, &fakeTunnel{}, verifier, ManagerSettings{
+		LastCommitted: &restored,
+		OnCommit: func(job Job, snapshot state.TunnelSnapshot) {
+			committed <- job
+			snapshots <- snapshot
+		},
+	})
+
+	snapshot, jobID, found := manager.LastCommitted()
+	if !found {
+		t.Fatal("restored snapshot was not found")
+	}
+	if jobID != "" {
+		t.Errorf("restored job id = %q, want empty", jobID)
+	}
+	if snapshot.ServerHostname != restored.ServerHostname {
+		t.Errorf("restored hostname = %q, want %q",
+			snapshot.ServerHostname, restored.ServerHostname)
+	}
+
+	submission, err := manager.Submit(t.Context(), testSwitchRequest())
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	job := waitJob(t, manager, submission.Job.ID)
+	if job.State != StateCommitted {
+		t.Fatalf("state = %q, want committed", job.State)
+	}
+
+	var notified Job
+	select {
+	case notified = <-committed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnCommit was not called")
+	}
+	if notified.ID != job.ID {
+		t.Errorf("notified job = %q, want %q", notified.ID, job.ID)
+	}
+	var committedSnapshot state.TunnelSnapshot
+	select {
+	case committedSnapshot = <-snapshots:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnCommit snapshot was not received")
+	}
+	if committedSnapshot.Egress == nil || !committedSnapshot.Egress.Verified {
+		t.Fatal("committed snapshot has no verified egress")
+	}
+
+	last, lastID, found := manager.LastCommitted()
+	if !found {
+		t.Fatal("committed snapshot was not found")
+	}
+	if lastID != job.ID {
+		t.Errorf("last committed job = %q, want %q", lastID, job.ID)
+	}
+	if last.Egress == nil || last.Egress.IP != committedSnapshot.Egress.IP {
+		t.Errorf("last committed egress = %v, want %v",
+			last.Egress, committedSnapshot.Egress)
 	}
 }
 
