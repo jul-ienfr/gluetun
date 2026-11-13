@@ -15,6 +15,7 @@ import (
 	"github.com/qdm12/gluetun/internal/control/catalog"
 	"github.com/qdm12/gluetun/internal/control/events"
 	"github.com/qdm12/gluetun/internal/control/jobs"
+	"github.com/qdm12/gluetun/internal/control/observability"
 	"github.com/qdm12/gluetun/internal/control/state"
 	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/models"
@@ -54,6 +55,7 @@ func newControlHandler(logger Logger, control settings.Control,
 	}
 
 	eventBus, eventLog := newEventBus(control, logger)
+	metrics := observability.NewMetrics()
 
 	var manager *jobs.Manager
 	catalogService := newCatalog(storage, vpnLooper.GetSettings().Provider.Name)
@@ -72,7 +74,7 @@ func newControlHandler(logger Logger, control settings.Control,
 		}
 
 		manager = newJobsManager(vpnLooper, storage, egressService,
-			catalogService, eventBus, eventLog, logger, persisted,
+			catalogService, eventBus, eventLog, metrics, logger, persisted,
 			persistedFound, runtimeState)
 	}
 
@@ -122,8 +124,8 @@ func newEventBus(control settings.Control, logger Logger) (
 
 func newJobsManager(vpnLooper VPNLooper, storage Storage, egress *verify.Service,
 	catalogService *catalog.Catalog, bus *events.Bus, eventLog *events.FileLog,
-	logger Logger, persisted state.DesiredState, persistedFound bool,
-	runtimeState *controlRuntimeState,
+	metrics *observability.Metrics, logger Logger, persisted state.DesiredState,
+	persistedFound bool, runtimeState *controlRuntimeState,
 ) *jobs.Manager {
 	vpnSettings := vpnLooper.GetSettings()
 	preflight := jobs.NewPreflight(jobs.PreflightSettings{
@@ -147,7 +149,7 @@ func newJobsManager(vpnLooper VPNLooper, storage Storage, egress *verify.Service
 		},
 		Verifier:  egress,
 		Preflight: preflight,
-		Events:    eventSink(bus, eventLog, logger),
+		Events:    eventSink(bus, eventLog, metrics, logger),
 		Cooldown:  cooldown,
 	})
 
@@ -448,9 +450,10 @@ func normalizeVPNStatus(status models.LoopStatus) string {
 }
 
 func eventSink(bus *events.Bus, log *events.FileLog,
-	logger Logger,
+	metrics *observability.Metrics, logger Logger,
 ) jobs.EventSink {
 	return func(event string, job jobs.Job) {
+		observeJob(metrics, event, job)
 		published := bus.Publish(events.Event{
 			Type:     event,
 			Severity: eventSeverity(event),
@@ -472,6 +475,58 @@ func eventSink(bus *events.Bus, log *events.FileLog,
 			}
 		}
 	}
+}
+
+// observeJob feeds the job metrics only for terminal events. Intermediate
+// events such as drain.timeout are skipped so a single job is counted once.
+func observeJob(metrics *observability.Metrics, event string, job jobs.Job) {
+	if metrics == nil {
+		return
+	}
+	switch event {
+	case jobs.EventJobCommitted, jobs.EventJobRejected,
+		jobs.EventJobCanceled, jobs.EventRolledBack,
+		jobs.EventFailedDegraded, jobs.EventSwitchNoop:
+	default:
+		return
+	}
+
+	observation := observability.JobObservation{
+		Kind:  string(job.Kind),
+		State: string(job.State),
+	}
+	if job.FinishedAt != nil {
+		start := job.CreatedAt
+		if job.StartedAt != nil {
+			start = *job.StartedAt
+		}
+		if job.FinishedAt.After(start) {
+			observation.Duration = job.FinishedAt.Sub(start)
+		}
+	}
+
+	phases := map[string]time.Duration{
+		"validating":       time.Duration(job.Timings.Validating) * time.Millisecond,
+		"preflight":        time.Duration(job.Timings.Preflight) * time.Millisecond,
+		"draining":         time.Duration(job.Timings.Draining) * time.Millisecond,
+		"applying":         time.Duration(job.Timings.Applying) * time.Millisecond,
+		"awaiting_tunnel":  time.Duration(job.Timings.AwaitingTunnel) * time.Millisecond,
+		"verifying_egress": time.Duration(job.Timings.VerifyingEgress) * time.Millisecond,
+		"rolling_back":     time.Duration(job.Timings.RollingBack) * time.Millisecond,
+	}
+	observation.PhaseDurations = make(map[string]time.Duration, len(phases))
+	for phase, duration := range phases {
+		if duration > 0 {
+			observation.PhaseDurations[phase] = duration
+		}
+	}
+
+	observation.AttemptResults = make([]string, 0, len(job.Attempts))
+	for _, attempt := range job.Attempts {
+		observation.AttemptResults = append(observation.AttemptResults, attempt.Result)
+	}
+
+	metrics.ObserveJob(observation)
 }
 
 func eventSeverity(event string) string {

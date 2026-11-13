@@ -34,7 +34,31 @@ type egressSourceMetrics struct {
 	banned       bool
 }
 
-// Metrics collects control plane route counters and latency histograms.
+type jobResultKey struct {
+	kind   string
+	result string
+}
+
+type jobMetrics struct {
+	results     map[jobResultKey]uint64
+	attempts    map[jobResultKey]uint64
+	durations   map[string]*latencyMetrics
+	phases      map[string]time.Duration
+	phaseCounts map[string]uint64
+}
+
+// JobObservation is one terminal job outcome, decoupled from the jobs package
+// to keep the observability layer independent.
+type JobObservation struct {
+	Kind           string
+	State          string
+	Duration       time.Duration
+	PhaseDurations map[string]time.Duration
+	AttemptResults []string
+}
+
+// Metrics collects control plane route counters, egress counters, job outcomes
+// and latency histograms.
 type Metrics struct {
 	mutex                sync.Mutex
 	requests             map[string]*requestMetrics
@@ -46,6 +70,7 @@ type Metrics struct {
 	egressDissenters     int
 	egressCanaryOK       int
 	egressCanaryObserved bool
+	jobs                 *jobMetrics
 }
 
 // NewMetrics creates an empty metrics registry.
@@ -55,6 +80,17 @@ func NewMetrics() *Metrics {
 		latency:             make(map[string]*latencyMetrics),
 		egressVerifications: make(map[string]uint64),
 		egressSources:       make(map[string]*egressSourceMetrics),
+		jobs:                newJobMetrics(),
+	}
+}
+
+func newJobMetrics() *jobMetrics {
+	return &jobMetrics{
+		results:     make(map[jobResultKey]uint64),
+		attempts:    make(map[jobResultKey]uint64),
+		durations:   make(map[string]*latencyMetrics),
+		phases:      make(map[string]time.Duration),
+		phaseCounts: make(map[string]uint64),
 	}
 }
 
@@ -128,6 +164,91 @@ func (m *Metrics) ObserveEgressVerification(verification egress.Verification) {
 
 	if verification.Cached {
 		m.egressCacheHits++
+	}
+}
+
+// ObserveJob records one terminal job outcome. Labels are restricted to
+// bounded enumerations so a stream of jobs cannot grow cardinality without
+// limit.
+func (m *Metrics) ObserveJob(observation JobObservation) {
+	kind := boundedJobKind(observation.Kind)
+	result := boundedJobState(observation.State)
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if m.jobs == nil {
+		m.jobs = newJobMetrics()
+	}
+	m.jobs.results[jobResultKey{kind: kind, result: result}]++
+
+	if observation.Duration > 0 {
+		metrics, ok := m.jobs.durations[kind]
+		if !ok {
+			metrics = &latencyMetrics{}
+			m.jobs.durations[kind] = metrics
+		}
+		if metrics.count == 0 || observation.Duration < metrics.min {
+			metrics.min = observation.Duration
+		}
+		if observation.Duration > metrics.max {
+			metrics.max = observation.Duration
+		}
+		metrics.count++
+		metrics.sum += observation.Duration
+	}
+
+	for phase, duration := range observation.PhaseDurations {
+		if duration <= 0 {
+			continue
+		}
+		phase = boundedJobPhase(phase)
+		m.jobs.phases[phase] += duration
+		m.jobs.phaseCounts[phase]++
+	}
+
+	for _, attempt := range observation.AttemptResults {
+		attemptResult := boundedJobAttemptResult(attempt)
+		m.jobs.attempts[jobResultKey{kind: kind, result: attemptResult}]++
+	}
+}
+
+func boundedJobKind(kind string) string {
+	switch kind {
+	case "switch", "rotate", "rollback", "recover":
+		return kind
+	default:
+		return "other"
+	}
+}
+
+func boundedJobState(state string) string {
+	switch state {
+	case "committed", "rejected", "rolled_back", "failed_degraded",
+		"exhausted", "cancelled", "interrupted":
+		return state
+	default:
+		return "other"
+	}
+}
+
+func boundedJobPhase(phase string) string {
+	switch phase {
+	case "validating", "preflight", "draining", "applying",
+		"awaiting_tunnel", "verifying_egress", "rolling_back":
+		return phase
+	default:
+		return "other"
+	}
+}
+
+func boundedJobAttemptResult(result string) string {
+	switch result {
+	case "committed", "rejected", "skipped", "cooldown", "excluded",
+		"accepted", "success", "failed":
+		return result
+	default:
+		return "other"
 	}
 }
 
@@ -261,7 +382,115 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		}
 	}
 
+	err := m.writeJobsPrometheus(w)
+	if err != nil {
+		return err
+	}
 	return m.writeEgressPrometheus(w)
+}
+
+func (m *Metrics) writeJobsPrometheus(w io.Writer) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if m.jobs == nil {
+		return nil
+	}
+	keys := make([]jobResultKey, 0, len(m.jobs.results))
+	for key := range m.jobs.results {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].kind != keys[j].kind {
+			return keys[i].kind < keys[j].kind
+		}
+		return keys[i].result < keys[j].result
+	})
+	for _, key := range keys {
+		_, err := fmt.Fprintf(w,
+			"gluetun_control_jobs_total{kind=%s,state=%s} %d\n",
+			strconv.Quote(key.kind), strconv.Quote(key.result),
+			m.jobs.results[key])
+		if err != nil {
+			return err
+		}
+	}
+
+	kinds := make([]string, 0, len(m.jobs.durations))
+	for kind := range m.jobs.durations {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		metrics := m.jobs.durations[kind]
+		label := fmt.Sprintf("kind=%s", strconv.Quote(kind))
+		_, err := fmt.Fprintf(w,
+			"gluetun_control_job_duration_seconds_count{%s} %d\n",
+			label, metrics.count)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(w,
+			"gluetun_control_job_duration_seconds_sum{%s} %g\n",
+			label, metrics.sum.Seconds())
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(w,
+			"gluetun_control_job_duration_seconds_min{%s} %g\n",
+			label, metrics.min.Seconds())
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(w,
+			"gluetun_control_job_duration_seconds_max{%s} %g\n",
+			label, metrics.max.Seconds())
+		if err != nil {
+			return err
+		}
+	}
+
+	phases := make([]string, 0, len(m.jobs.phases))
+	for phase := range m.jobs.phases {
+		phases = append(phases, phase)
+	}
+	sort.Strings(phases)
+	for _, phase := range phases {
+		_, err := fmt.Fprintf(w,
+			"gluetun_control_job_phase_duration_seconds_total{phase=%s} %g\n",
+			strconv.Quote(phase), m.jobs.phases[phase].Seconds())
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(w,
+			"gluetun_control_job_phase_duration_seconds_count{phase=%s} %d\n",
+			strconv.Quote(phase), m.jobs.phaseCounts[phase])
+		if err != nil {
+			return err
+		}
+	}
+
+	attemptKeys := make([]jobResultKey, 0, len(m.jobs.attempts))
+	for key := range m.jobs.attempts {
+		attemptKeys = append(attemptKeys, key)
+	}
+	sort.Slice(attemptKeys, func(i, j int) bool {
+		if attemptKeys[i].kind != attemptKeys[j].kind {
+			return attemptKeys[i].kind < attemptKeys[j].kind
+		}
+		return attemptKeys[i].result < attemptKeys[j].result
+	})
+	for _, key := range attemptKeys {
+		_, err := fmt.Fprintf(w,
+			"gluetun_control_job_attempts_total{kind=%s,result=%s} %d\n",
+			strconv.Quote(key.kind), strconv.Quote(key.result),
+			m.jobs.attempts[key])
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m *Metrics) writeEgressPrometheus(w io.Writer) error {
