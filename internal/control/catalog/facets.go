@@ -115,7 +115,7 @@ func serverProtocols(server models.Server) []string {
 	}
 }
 
-func buildFacets(servers []models.Server) Facets {
+func buildFacets(candidates []ServerCandidate) Facets {
 	countries := map[string]int{}
 	regions := map[string]int{}
 	cities := map[string]int{}
@@ -123,15 +123,15 @@ func buildFacets(servers []models.Server) Facets {
 	categories := map[string]int{}
 	tiers := map[string]int{}
 
-	for _, server := range servers {
-		increment(countries, server.Country)
-		increment(regions, server.Region)
-		increment(cities, server.City)
-		increment(isps, server.ISP)
-		for _, category := range server.Categories {
+	for _, candidate := range candidates {
+		increment(countries, candidate.Country)
+		increment(regions, candidate.Region)
+		increment(cities, candidate.City)
+		increment(isps, candidate.ISP)
+		for _, category := range candidate.Categories {
 			increment(categories, category)
 		}
-		increment(tiers, serverTier(server))
+		increment(tiers, candidate.Tier)
 	}
 
 	return Facets{

@@ -1,6 +1,10 @@
 package catalog
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/qdm12/gluetun/internal/models"
+)
 
 // ServerDetail is the full public view of one server.
 type ServerDetail struct {
@@ -22,13 +26,17 @@ func (c *Catalog) Get(hostname string) (candidate ServerCandidate, found bool,
 	if err != nil {
 		return ServerCandidate{}, false, err
 	}
+	matched := make([]models.Server, 0, 1)
 	for _, server := range servers {
 		if !strings.EqualFold(server.Hostname, hostname) {
 			continue
 		}
-		return Candidate(server), true, nil
+		matched = append(matched, server)
 	}
-	return ServerCandidate{}, false, nil
+	if len(matched) == 0 {
+		return ServerCandidate{}, false, nil
+	}
+	return candidatesFromServers(matched)[0], true, nil
 }
 
 // Detail returns the full public view of one server.

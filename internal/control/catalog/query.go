@@ -67,13 +67,14 @@ func (c *Catalog) Query(query Query) (Page, error) {
 		return Page{}, err
 	}
 
-	candidates := make([]ServerCandidate, 0, len(servers))
+	matched := make([]models.Server, 0, len(servers))
 	for _, server := range servers {
 		if !matches(server, query) {
 			continue
 		}
-		candidates = append(candidates, Candidate(server))
+		matched = append(matched, server)
 	}
+	candidates := candidatesFromServers(matched)
 
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Hostname < candidates[j].Hostname
@@ -118,7 +119,7 @@ func (c *Catalog) Facets() (Facets, error) {
 	if err != nil {
 		return Facets{}, err
 	}
-	return buildFacets(servers), nil
+	return buildFacets(candidatesFromServers(servers)), nil
 }
 
 func (c *Catalog) servers() ([]models.Server, error) {

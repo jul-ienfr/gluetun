@@ -84,7 +84,7 @@ func Test_Candidate(t *testing.T) {
 func Test_buildFacets(t *testing.T) {
 	t.Parallel()
 
-	facets := buildFacets(testServers())
+	facets := buildFacets(candidatesFromServers(testServers()))
 
 	assert.Equal(t, []FacetValue{
 		{Value: "Germany", Count: 1},
