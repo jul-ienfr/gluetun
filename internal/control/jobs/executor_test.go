@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -382,6 +383,57 @@ func Test_Executor_Inspect_TransportFallback(t *testing.T) {
 	}
 	if len(inspection.Plan.Warnings) == 0 {
 		t.Error("warnings are empty")
+	}
+}
+
+func Test_Executor_transportLadder_FollowsExplicitVPN(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		executor *Executor
+		policy   []Transport
+		expected []Transport
+	}{
+		"non explicit uses the full ladder": {
+			executor: &Executor{vpn: VPNOpenVPN, vpnExplicit: false},
+			expected: []Transport{
+				TransportWireGuard, TransportOpenVPNUDP, TransportOpenVPNTCP,
+			},
+		},
+		"explicit openvpn stays on openvpn": {
+			executor: &Executor{vpn: VPNOpenVPN, vpnExplicit: true},
+			expected: []Transport{TransportOpenVPNUDP, TransportOpenVPNTCP},
+		},
+		"non explicit accepts a wireguard policy": {
+			executor: &Executor{vpn: VPNOpenVPN, vpnExplicit: false},
+			policy:   []Transport{TransportWireGuard},
+			expected: []Transport{TransportWireGuard},
+		},
+		"explicit openvpn rejects a wireguard policy": {
+			executor: &Executor{vpn: VPNOpenVPN, vpnExplicit: true},
+			policy:   []Transport{TransportWireGuard},
+			expected: nil,
+		},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ladder, err := testCase.executor.transportLadder(testCase.policy)
+			if testCase.expected == nil {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("transport ladder: %v", err)
+			}
+			if !slices.Equal(testCase.expected, ladder) {
+				t.Fatalf("ladder = %v, want %v", ladder, testCase.expected)
+			}
+		})
 	}
 }
 

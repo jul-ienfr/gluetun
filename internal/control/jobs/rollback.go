@@ -28,9 +28,9 @@ var (
 )
 
 const (
-	defaultRollbackApplyTimeout  = 30 * time.Second
-	defaultRollbackAwaitTimeout  = 30 * time.Second
-	defaultRollbackVerifyTimeout = 30 * time.Second
+	defaultRollbackApplyTimeout  = 60 * time.Second
+	defaultRollbackAwaitTimeout  = 120 * time.Second
+	defaultRollbackVerifyTimeout = 60 * time.Second
 )
 
 // Tunnel is the VPN control surface used by switch and rollback jobs.

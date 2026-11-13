@@ -14,11 +14,13 @@ import (
 type fakeResolver struct {
 	addresses []netip.Addr
 	err       error
+	calls     int
 }
 
-func (r fakeResolver) LookupNetIP(ctx context.Context, network, host string) (
+func (r *fakeResolver) LookupNetIP(ctx context.Context, network, host string) (
 	[]netip.Addr, error,
 ) {
+	r.calls++
 	return r.addresses, r.err
 }
 
@@ -62,7 +64,7 @@ func TestPreflightSuccess(t *testing.T) {
 
 	dialer := &fakeDialer{}
 	preflight := NewPreflight(PreflightSettings{
-		Resolver: fakeResolver{
+		Resolver: &fakeResolver{
 			addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")},
 		},
 		Dialer: dialer,
@@ -87,6 +89,34 @@ func TestPreflightSuccess(t *testing.T) {
 	}
 }
 
+func TestPreflightExplicitEndpointSkipsDNS(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakeResolver{err: errors.New("dns unavailable before tunnel")}
+	dialer := &fakeDialer{}
+	preflight := NewPreflight(PreflightSettings{
+		Resolver:    resolver,
+		Dialer:      dialer,
+		Credentials: Credentials{OpenVPN: true},
+	})
+	endpoint := netip.MustParseAddr("1.2.3.4")
+
+	target, err := preflight.Check(context.Background(), OpenVPNUDP,
+		Target{Hostname: "example.com", EndpointIP: endpoint})
+	if err != nil {
+		t.Fatalf("checking target: %v", err)
+	}
+	if target.EndpointIP != endpoint {
+		t.Fatalf("endpoint: %s", target.EndpointIP)
+	}
+	if resolver.calls != 0 {
+		t.Fatalf("resolver calls: %d, want 0", resolver.calls)
+	}
+	if dialer.address != "1.2.3.4:1194" {
+		t.Fatalf("dial address: %s", dialer.address)
+	}
+}
+
 func TestPreflightErrors(t *testing.T) {
 	t.Parallel()
 
@@ -98,7 +128,7 @@ func TestPreflightErrors(t *testing.T) {
 	}{
 		"missing credentials": {
 			preflight: PreflightSettings{
-				Resolver: fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")}},
+				Resolver: &fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")}},
 			},
 			transport: OpenVPNUDP,
 			target:    Target{Hostname: "example.com"},
@@ -114,28 +144,16 @@ func TestPreflightErrors(t *testing.T) {
 		},
 		"resolution failure": {
 			preflight: PreflightSettings{
-				Resolver:    fakeResolver{err: errors.New("nope")},
+				Resolver:    &fakeResolver{err: errors.New("nope")},
 				Credentials: Credentials{OpenVPN: true},
 			},
 			transport: OpenVPNUDP,
 			target:    Target{Hostname: "example.com"},
 			expected:  ReasonConfigInvalid,
 		},
-		"endpoint mismatch": {
-			preflight: PreflightSettings{
-				Resolver:    fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")}},
-				Credentials: Credentials{OpenVPN: true},
-			},
-			transport: OpenVPNUDP,
-			target: Target{
-				Hostname:   "example.com",
-				EndpointIP: netip.MustParseAddr("5.6.7.8"),
-			},
-			expected: ReasonConfigInvalid,
-		},
 		"tcp refused": {
 			preflight: PreflightSettings{
-				Resolver:    fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")}},
+				Resolver:    &fakeResolver{addresses: []netip.Addr{netip.MustParseAddr("1.2.3.4")}},
 				Dialer:      &fakeDialer{err: syscall.ECONNREFUSED},
 				Credentials: Credentials{OpenVPN: true},
 			},
@@ -168,7 +186,7 @@ func TestPreflightUsesExplicitEndpointWithoutResolution(t *testing.T) {
 
 	dialer := &fakeDialer{}
 	preflight := NewPreflight(PreflightSettings{
-		Resolver:    fakeResolver{},
+		Resolver:    &fakeResolver{},
 		Dialer:      dialer,
 		Credentials: Credentials{WireGuard: true},
 	})

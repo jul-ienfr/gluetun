@@ -26,7 +26,8 @@ func (p *recordingProber) Probe(_ context.Context, transport Transport,
 	return nil
 }
 
-func newPolicyExecutor(t *testing.T, vpn string, prober *recordingProber,
+func newPolicyExecutor(t *testing.T, vpn string, explicit bool,
+	prober *recordingProber,
 ) *Executor {
 	t.Helper()
 
@@ -46,6 +47,7 @@ func newPolicyExecutor(t *testing.T, vpn string, prober *recordingProber,
 		StationID:   "station-1",
 		Provider:    "nordvpn",
 		VPN:         vpn,
+		VPNExplicit: explicit,
 		Tunnel:      &fakeTunnel{},
 		Snapshotter: snapshotter,
 		Verifier:    &fakeVerifier{results: []egress.Verification{verifiedIP("198.51.100.8")}},
@@ -59,6 +61,7 @@ func Test_Inspect_TransportPolicy(t *testing.T) {
 
 	testCases := map[string]struct {
 		vpn         string
+		explicit    bool
 		policy      []Transport
 		failing     map[Transport]bool
 		wantProbes  []Transport
@@ -71,6 +74,7 @@ func Test_Inspect_TransportPolicy(t *testing.T) {
 		},
 		"explicit VPN restricts ladder": {
 			vpn:        VPNWireGuard,
+			explicit:   true,
 			wantProbes: []Transport{TransportWireGuard},
 			wantPlan:   TransportWireGuard,
 		},
@@ -99,6 +103,7 @@ func Test_Inspect_TransportPolicy(t *testing.T) {
 		},
 		"policy mismatches explicit VPN": {
 			vpn:         VPNWireGuard,
+			explicit:    true,
 			policy:      []Transport{TransportOpenVPNTCP},
 			wantWrapped: ErrInvalidTarget,
 		},
@@ -109,7 +114,8 @@ func Test_Inspect_TransportPolicy(t *testing.T) {
 			t.Parallel()
 
 			prober := &recordingProber{failing: testCase.failing}
-			executor := newPolicyExecutor(t, testCase.vpn, prober)
+			executor := newPolicyExecutor(t, testCase.vpn, testCase.explicit,
+				prober)
 			request := testSwitchRequest()
 			request.Options.TransportPolicy = testCase.policy
 
@@ -149,7 +155,7 @@ func Test_Inspect_TransportPolicy(t *testing.T) {
 func Test_Manager_SubmitRotation_InvalidTransportPolicy(t *testing.T) {
 	t.Parallel()
 
-	executor := newPolicyExecutor(t, "", &recordingProber{})
+	executor := newPolicyExecutor(t, "", false, &recordingProber{})
 	manager := NewManager(ManagerSettings{Executor: executor, Now: testTime})
 
 	request := testRotationRequest("a.example.com")

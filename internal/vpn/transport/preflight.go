@@ -103,22 +103,20 @@ func (p *Preflight) Check(ctx context.Context, transport Transport,
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	addresses, err := p.resolver.LookupNetIP(ctx, "ip", target.Hostname)
-	if err != nil {
-		return Target{}, NewFailure(ReasonConfigInvalid,
-			fmt.Errorf("resolving %q: %w", target.Hostname, err))
-	}
-	addresses = unmapAddrs(addresses)
-
 	endpoint := target.EndpointIP
 	if endpoint.IsValid() {
+		// The provider catalogue or the caller already pinned the endpoint.
+		// Resolving the hostname here would require the very tunnel the
+		// preflight is about to establish, which fails when DNS is
+		// fail-closed before the tunnel is up.
 		endpoint = endpoint.Unmap()
-		if len(addresses) > 0 && !containsAddr(addresses, endpoint) {
-			return Target{}, NewFailure(ReasonConfigInvalid,
-				fmt.Errorf("%s is not advertised by %q", endpoint,
-					target.Hostname))
-		}
 	} else {
+		addresses, err := p.resolver.LookupNetIP(ctx, "ip", target.Hostname)
+		if err != nil {
+			return Target{}, NewFailure(ReasonConfigInvalid,
+				fmt.Errorf("resolving %q: %w", target.Hostname, err))
+		}
+		addresses = unmapAddrs(addresses)
 		if len(addresses) == 0 {
 			return Target{}, NewFailure(ReasonConfigInvalid,
 				fmt.Errorf("hostname %q has no IP address", target.Hostname))

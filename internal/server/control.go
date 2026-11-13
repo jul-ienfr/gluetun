@@ -148,9 +148,11 @@ func newJobsManager(vpnLooper VPNLooper, storage Storage, egress *verify.Service
 
 	cooldown := catalog.NewCooldown(catalog.CooldownOptions{})
 	executor := jobs.NewExecutor(jobs.ExecutorSettings{
-		StationID: runtimeState.stationID,
-		Provider:  vpnSettings.Provider.Name,
-		Tunnel:    tunnelAdapter{loop: vpnLooper},
+		StationID:   runtimeState.stationID,
+		Provider:    vpnSettings.Provider.Name,
+		VPN:         vpnSettings.Type,
+		VPNExplicit: vpnSettings.TypeExplicit,
+		Tunnel:      tunnelAdapter{loop: vpnLooper},
 		Snapshotter: tunnelSnapshotter{
 			loop:      vpnLooper,
 			stationID: runtimeState.stationID,

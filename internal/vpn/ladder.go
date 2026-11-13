@@ -48,12 +48,13 @@ type ladderDriver struct {
 }
 
 func newLadderDriver(loop *Loop, base settings.VPN) *ladderDriver {
-	return &ladderDriver{
+	driver := &ladderDriver{
 		loop:   loop,
 		base:   base,
 		logger: loop.logger,
-		target: ladderTarget(base),
 	}
+	driver.target = driver.targetFor(base)
+	return driver
 }
 
 // Configure pins the driver on a loop settings snapshot. It is called from the
@@ -63,7 +64,38 @@ func (d *ladderDriver) Configure(ctx context.Context, base settings.VPN) {
 	defer d.mutex.Unlock()
 	d.base = base
 	d.runCtx = ctx
-	d.target = ladderTarget(base)
+	d.target = d.targetFor(base)
+}
+
+// targetFor resolves the pinned hostname from the provider catalogue instead
+// of DNS. The ladder runs before the tunnel is up, so the local DNS ladder can
+// be fail-closed and unable to resolve the server name yet.
+func (d *ladderDriver) targetFor(base settings.VPN) transportpkg.Target {
+	target := ladderTarget(base)
+	if target.Hostname == "" || target.EndpointIP.IsValid() ||
+		base.Provider.Name == "" {
+		return target
+	}
+	providerConf := d.loop.providers.Get(base.Provider.Name)
+	if providerConf == nil {
+		return target
+	}
+	selection := base.Provider.ServerSelection
+	if selection.VPN == "" {
+		selection.VPN = base.Type
+	}
+	if selection.VPN == "" {
+		selection.VPN = vpn.OpenVPN
+	}
+	if selection.Mode == "" {
+		selection.Mode = "random"
+	}
+	connection, err := providerConf.GetConnection(selection, false)
+	if err != nil || !connection.IP.IsValid() {
+		return target
+	}
+	target.EndpointIP = connection.IP
+	return target
 }
 
 // shouldRunLadder reports whether the runtime ladder can drive the loop for

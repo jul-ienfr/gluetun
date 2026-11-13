@@ -34,10 +34,10 @@ var (
 )
 
 const (
-	defaultSwitchTimeout = 45 * time.Second
+	defaultSwitchTimeout = 180 * time.Second
 	defaultApplyTimeout  = 30 * time.Second
-	defaultAwaitTimeout  = 30 * time.Second
-	defaultVerifyTimeout = 30 * time.Second
+	defaultAwaitTimeout  = 120 * time.Second
+	defaultVerifyTimeout = 60 * time.Second
 	defaultDrainTimeout  = 5 * time.Second
 
 	estimatedValidatingMS = 20
@@ -104,9 +104,14 @@ type SwitchRequest struct {
 
 // ExecutorSettings configure the switch executor.
 type ExecutorSettings struct {
-	StationID   string
-	Provider    string
-	VPN         string
+	StationID string
+	Provider  string
+	VPN       string
+	// VPNExplicit is true when VPN_TYPE was set by the user. When it is
+	// false, the runtime transport ladder owns the transport choice and the
+	// executor must try every transport instead of restricting itself to the
+	// default VPN type.
+	VPNExplicit bool
 	Tunnel      Tunnel
 	Snapshotter Snapshotter
 	Verifier    EgressVerifier
@@ -131,6 +136,7 @@ type Executor struct {
 	stationID   string
 	provider    string
 	vpn         string
+	vpnExplicit bool
 	tunnel      Tunnel
 	snapshotter Snapshotter
 	verifier    EgressVerifier
@@ -182,6 +188,7 @@ func NewExecutor(settings ExecutorSettings) *Executor {
 		stationID:     settings.StationID,
 		provider:      settings.Provider,
 		vpn:           settings.VPN,
+		vpnExplicit:   settings.VPNExplicit,
 		tunnel:        settings.Tunnel,
 		snapshotter:   settings.Snapshotter,
 		verifier:      settings.Verifier,
@@ -608,7 +615,8 @@ func (e *Executor) transportLadder(policy []Transport) ([]Transport,
 				return nil, fmt.Errorf("%w: unknown transport %q",
 					ErrInvalidTarget, transport)
 			}
-			if e.vpn != "" && transportVPNType(transport) != e.vpn {
+			if e.vpnExplicit && e.vpn != "" &&
+				transportVPNType(transport) != e.vpn {
 				return nil, fmt.Errorf(
 					"%w: transport %q does not match VPN %q",
 					ErrInvalidTarget, transport, e.vpn)
@@ -620,6 +628,11 @@ func (e *Executor) transportLadder(policy []Transport) ([]Transport,
 		return ladder, nil
 	}
 
+	if !e.vpnExplicit {
+		return []Transport{
+			TransportWireGuard, TransportOpenVPNUDP, TransportOpenVPNTCP,
+		}, nil
+	}
 	switch e.vpn {
 	case VPNWireGuard:
 		return []Transport{TransportWireGuard}, nil
