@@ -99,6 +99,7 @@ func (h *vpnHandler) setStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *vpnHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 	vpnSettings := h.looper.GetSettings()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	encoder := json.NewEncoder(w)
 	if !revealRequested(r) {
 		masked, err := api.MaskedVPNSettings(vpnSettings)

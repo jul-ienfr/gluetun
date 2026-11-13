@@ -15,6 +15,7 @@ func Read(filepath string) (settings Settings, err error) {
 	if err != nil {
 		return settings, fmt.Errorf("opening file: %w", err)
 	}
+	defer file.Close()
 	decoder := toml.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&settings)

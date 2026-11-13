@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/qdm12/gluetun/internal/control/observability"
 )
 
 // Event severities.
@@ -96,6 +98,7 @@ func (b *Bus) Publish(event Event) Event {
 	if event.Severity == "" {
 		event.Severity = SeverityInfo
 	}
+	event.Data = observability.ScrubMap(event.Data)
 
 	b.appendLocked(event)
 	for subscription := range b.subscribers {
@@ -169,6 +172,7 @@ func (b *Bus) Restore(history []Event) {
 		if event.Seq == 0 {
 			continue
 		}
+		event.Data = observability.ScrubMap(event.Data)
 		b.appendLocked(event)
 		b.seq.Restore(event.Seq)
 	}

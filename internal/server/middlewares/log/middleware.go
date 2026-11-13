@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/qdm12/gluetun/internal/control/observability"
 )
 
 func New(logger Logger, enabled bool) (
@@ -38,7 +40,7 @@ func (m *logMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.childHandler.ServeHTTP(statefulWriter, r)
 	duration := m.timeNow().Sub(tStart)
 	m.logger.Info(strconv.Itoa(statefulWriter.statusCode) + " " +
-		r.Method + " " + r.URL.String() +
+		r.Method + " " + observability.ScrubText(r.URL.String()) +
 		" wrote " + strconv.Itoa(statefulWriter.length) + "B to " +
 		r.RemoteAddr + " in " + duration.String())
 }
