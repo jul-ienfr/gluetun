@@ -80,6 +80,8 @@ func newTestHandler(t *testing.T, controlEnabled bool) http.Handler {
 		},
 	}
 
+	egressService := NewEgressService(controlSettings, publicIP, testLogger{})
+
 	handler, err := newHandler(context.Background(), testLogger{}, false, authSettings,
 		controlSettings,
 		models.BuildInformation{
@@ -87,7 +89,8 @@ func newTestHandler(t *testing.T, controlEnabled bool) http.Handler {
 			Commit:  "test-commit",
 			Created: "2026-01-01T00:00:00Z",
 		},
-		vpn, portForward, dns, updater, publicIP, fakeStorage{}, true)
+		vpn, portForward, dns, updater, publicIP, fakeStorage{}, true, nil,
+		egressService, nil)
 	require.NoError(t, err)
 	return handler
 }

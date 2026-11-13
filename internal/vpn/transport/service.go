@@ -30,3 +30,11 @@ func (s *Service) ResetTransport(target *Transport) error {
 	}
 	return s.ladder.Reset(target)
 }
+
+// SetEventSink forwards transport events to the control plane bus.
+func (s *Service) SetEventSink(sink EventSink) {
+	if s == nil || s.ladder == nil {
+		return
+	}
+	s.ladder.SetEventSink(sink)
+}

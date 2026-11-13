@@ -9,9 +9,12 @@ import (
 
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/control/api"
+	"github.com/qdm12/gluetun/internal/control/observability"
+	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/models"
 	"github.com/qdm12/gluetun/internal/server/middlewares/auth"
 	"github.com/qdm12/gluetun/internal/server/middlewares/log"
+	transportpkg "github.com/qdm12/gluetun/internal/vpn/transport"
 )
 
 func newHandler(ctx context.Context, logger Logger, logging bool,
@@ -25,6 +28,9 @@ func newHandler(ctx context.Context, logger Logger, logging bool,
 	publicIPLooper PublicIPLoop,
 	storage Storage,
 	ipv6Supported bool,
+	controlMetrics *observability.Metrics,
+	egress *verify.Service,
+	transportService *transportpkg.Service,
 ) (httpHandler http.Handler, err error) {
 	handler := &handler{}
 
@@ -36,7 +42,8 @@ func newHandler(ctx context.Context, logger Logger, logging bool,
 			return nil, fmt.Errorf("getting station hostname: %w", err)
 		}
 		controlHandler = newControlHandler(logger, controlSettings, buildInfo,
-			stationID, vpnLooper, dnsLooper, publicIPLooper, storage)
+			stationID, vpnLooper, dnsLooper, storage, controlMetrics,
+			egress, transportService)
 	}
 
 	vpn := newVPNHandler(ctx, vpnLooper, storage, ipv6Supported, logger,
@@ -84,6 +91,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if index := strings.IndexByte(controlPath, '?'); index >= 0 {
 		controlPath = controlPath[:index]
 	}
+	r.RequestURI = controlPath
 	if h.control != nil && h.control.Handles(controlPath) {
 		h.control.ServeHTTP(w, r)
 		return

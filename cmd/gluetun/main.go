@@ -27,11 +27,13 @@ import (
 	"github.com/qdm12/gluetun/internal/configuration/sources/secrets"
 	"github.com/qdm12/gluetun/internal/constants"
 	copenvpn "github.com/qdm12/gluetun/internal/constants/openvpn"
+	"github.com/qdm12/gluetun/internal/control/observability"
 	"github.com/qdm12/gluetun/internal/dns"
 	"github.com/qdm12/gluetun/internal/firewall"
 	"github.com/qdm12/gluetun/internal/healthcheck"
 	"github.com/qdm12/gluetun/internal/httpproxy"
 	"github.com/qdm12/gluetun/internal/metrics"
+	metricsprometheus "github.com/qdm12/gluetun/internal/metrics/prometheus"
 	"github.com/qdm12/gluetun/internal/models"
 	"github.com/qdm12/gluetun/internal/netlink"
 	"github.com/qdm12/gluetun/internal/openvpn"
@@ -431,6 +433,9 @@ func _main(ctx context.Context, buildInfo models.BuildInformation,
 		return fmt.Errorf("starting public ip loop: %w", err)
 	}
 
+	egressService := server.NewEgressService(allSettings.Control, publicIPLooper,
+		logger.New(log.SetComponent("egress")))
+
 	socks5Loop := socks5.NewLoop(socks5.Settings{
 		Enabled:      *allSettings.Socks5.Enabled,
 		Username:     *allSettings.Socks5.Username,
@@ -475,11 +480,27 @@ func _main(ctx context.Context, buildInfo models.BuildInformation,
 		providers, storage, boringPoll, allSettings.Health, healthChecker, healthcheckServer,
 		ovpnConf, netLinker, firewallConf, routingConf, portForwardLooper, cmder, publicIPLooper,
 		dnsLooper, vpnLogger, httpClient, buildInfo, *allSettings.Version.Enabled)
+	if egressService != nil {
+		vpnLooper.SetEgressVerifier(egressService)
+	}
+	err = vpnLooper.SetTransportLadder(allSettings.Control.Transport)
+	if err != nil {
+		return fmt.Errorf("setting up transport ladder: %w", err)
+	}
 	vpnHandler, vpnCtx, vpnDone := goshutdown.NewGoRoutineHandler(
 		"vpn", goroutine.OptionTimeout(time.Second))
 	go vpnLooper.Run(vpnCtx, vpnDone)
 
-	metricsServer, err := metrics.New(allSettings.Metrics, logger, vpnLooper, netLinker)
+	controlMetrics := observability.NewMetrics()
+	extraGatherers := []metricsprometheus.Gatherer{
+		metricsprometheus.NewTextGatherer(controlMetrics.WritePrometheus),
+	}
+	if transportMetrics := vpnLooper.TransportMetrics(); transportMetrics != nil {
+		extraGatherers = append(extraGatherers,
+			metricsprometheus.NewTextGatherer(transportMetrics.WritePrometheus))
+	}
+	metricsServer, err := metrics.New(allSettings.Metrics, logger, vpnLooper, netLinker,
+		extraGatherers...)
 	if err != nil {
 		return fmt.Errorf("creating metrics server: %w", err)
 	}
@@ -522,7 +543,8 @@ func _main(ctx context.Context, buildInfo models.BuildInformation,
 		allSettings.Control,
 		logger.New(log.SetComponent("http server")),
 		buildInfo, vpnLooper, portForwardLooper, dnsLooper, updaterLooper, publicIPLooper,
-		storage, ipv6SupportLevel.IsSupported())
+		storage, ipv6SupportLevel.IsSupported(), controlMetrics, egressService,
+		vpnLooper.TransportService())
 	if err != nil {
 		return fmt.Errorf("setting up control server: %w", err)
 	}

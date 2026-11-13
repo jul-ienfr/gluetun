@@ -139,6 +139,52 @@ func (l *Ladder) Warnings() []string {
 	return append([]string(nil), l.warnings...)
 }
 
+// SetEventSink replaces the event sink. It is safe to call while the ladder is
+// running so the control plane can attach its bus after startup.
+func (l *Ladder) SetEventSink(sink EventSink) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.events = sink
+}
+
+// ReportFailure records a failure for a committed transport, for example when
+// the watchdog had to repair the tunnel. It lets the next run skip the
+// transport once its breaker opens.
+func (l *Ladder) ReportFailure(transport Transport, reason Reason) {
+	now := l.now()
+	l.mutex.Lock()
+	breaker, ok := l.state.Breakers[transport]
+	if !ok {
+		l.mutex.Unlock()
+		return
+	}
+	opened := breaker.Failure(now, l.policy.BreakerThreshold,
+		l.policy.BreakerCooldown, l.policy.BreakerCooldownMax)
+	l.state.Breakers[transport] = breaker
+	l.state.UpdatedAt = now
+	l.mutex.Unlock()
+
+	if l.metrics != nil {
+		l.metrics.ObserveAttempt(transport, AttemptFailed, reason, 0)
+		l.metrics.SetBreaker(transport, breaker.State)
+	}
+
+	l.emit(Event{
+		Type:      EventFailed,
+		Transport: transport,
+		Result:    AttemptFailed,
+		Reason:    reason,
+	})
+	if opened {
+		l.emit(Event{
+			Type:      EventBreakerOpen,
+			Transport: transport,
+			Failures:  breaker.Failures,
+			RetryAt:   breaker.RetryAt,
+		})
+	}
+}
+
 func (l *Ladder) Snapshot() State {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
@@ -564,10 +610,13 @@ func (l *Ladder) attemptID(cycle int, transport Transport, attempt int) string {
 }
 
 func (l *Ladder) emit(event Event) {
-	if l.events == nil {
+	l.mutex.Lock()
+	sink := l.events
+	l.mutex.Unlock()
+	if sink == nil {
 		return
 	}
-	l.events(event)
+	sink(event)
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {

@@ -19,7 +19,10 @@ const (
 	defaultEgressCanaryTimeout = 2 * time.Second
 )
 
-func newEgressService(control settings.Control, publicIPLooper PublicIPLoop,
+// NewEgressService builds the egress verification service shared by the
+// control API and the VPN transport ladder. It returns nil when verification is
+// disabled.
+func NewEgressService(control settings.Control, publicIPLooper PublicIPLoop,
 	logger Logger,
 ) *verify.Service {
 	egressSettings := control.Egress

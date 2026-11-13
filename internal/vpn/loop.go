@@ -1,17 +1,28 @@
 package vpn
 
 import (
+	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
+	"github.com/qdm12/gluetun/internal/egress"
+	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/loopstate"
 	"github.com/qdm12/gluetun/internal/models"
 	"github.com/qdm12/gluetun/internal/netlink"
 	"github.com/qdm12/gluetun/internal/vpn/state"
+	transportpkg "github.com/qdm12/gluetun/internal/vpn/transport"
 	"github.com/qdm12/log"
 )
+
+// egressVerifier is the subset of the egress verification service used by the
+// transport ladder.
+type egressVerifier interface {
+	Verify(ctx context.Context, request verify.Request) (egress.Verification, error)
+}
 
 type Loop struct {
 	statusManager  *loopstate.State
@@ -27,14 +38,19 @@ type Loop struct {
 	ipv6SupportLevel netlink.IPv6SupportLevel
 	vpnInputPorts    []uint16 // TODO make changeable through stateful firewall
 	// Configurators
-	openvpnConf OpenVPN
-	netLinker   NetLinker
-	fw          Firewall
-	routing     Routing
-	portForward PortForward
-	publicip    PublicIPLoop
-	dnsLooper   DNSLoop
-	boringPoll  Service
+	openvpnConf  OpenVPN
+	netLinker    NetLinker
+	fw           Firewall
+	routing      Routing
+	portForward  PortForward
+	publicip     PublicIPLoop
+	dnsLooper    DNSLoop
+	boringPoll   Service
+	egress       egressVerifier
+	transport    *transportpkg.Integration
+	transportDrv *ladderDriver
+	transMetrics *transportpkg.Metrics
+	ladderActive atomic.Bool
 	// Other objects
 	cmder  Cmder // for OpenVPN and up/down commands
 	logger log.LoggerInterface

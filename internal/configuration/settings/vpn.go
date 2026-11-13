@@ -14,12 +14,15 @@ type VPN struct {
 	// Type is the VPN type and can only be
 	// 'openvpn' or 'wireguard'. It cannot be the
 	// empty string in the internal state.
-	Type      string    `json:"type"`
-	Provider  Provider  `json:"provider"`
-	AmneziaWg AmneziaWg `json:"amneziawg"`
-	OpenVPN   OpenVPN   `json:"openvpn"`
-	Wireguard Wireguard `json:"wireguard"`
-	PMTUD     PMTUD     `json:"pmtud"`
+	Type string `json:"type"`
+	// TypeExplicit is true when the user set VPN_TYPE explicitly. An explicit
+	// type disables the transport ladder so the upstream behavior is preserved.
+	TypeExplicit bool      `json:"-"`
+	Provider     Provider  `json:"provider"`
+	AmneziaWg    AmneziaWg `json:"amneziawg"`
+	OpenVPN      OpenVPN   `json:"openvpn"`
+	Wireguard    Wireguard `json:"wireguard"`
+	PMTUD        PMTUD     `json:"pmtud"`
 	// UpCommand is the command to use when the VPN connection is up.
 	// It can be the empty string to indicate not to run a command.
 	// It cannot be nil in the internal state.
@@ -74,8 +77,9 @@ func (v *VPN) Validate(filterChoicesGetter FilterChoicesGetter, ipv6Supported bo
 
 func (v *VPN) Copy() (copied VPN) {
 	return VPN{
-		Type:        v.Type,
-		Provider:    v.Provider.copy(),
+		Type:         v.Type,
+		TypeExplicit: v.TypeExplicit,
+		Provider:     v.Provider.copy(),
 		AmneziaWg:   v.AmneziaWg.copy(),
 		OpenVPN:     v.OpenVPN.copy(),
 		Wireguard:   v.Wireguard.copy(),
@@ -87,6 +91,7 @@ func (v *VPN) Copy() (copied VPN) {
 
 func (v *VPN) OverrideWith(other VPN) {
 	v.Type = gosettings.OverrideWithComparable(v.Type, other.Type)
+	v.TypeExplicit = v.TypeExplicit || other.TypeExplicit
 	v.Provider.overrideWith(other.Provider)
 	v.AmneziaWg.overrideWith(other.AmneziaWg)
 	v.OpenVPN.overrideWith(other.OpenVPN)
@@ -138,6 +143,7 @@ func (v VPN) toLinesNode() (node *gotree.Node) {
 
 func (v *VPN) read(r *reader.Reader) (err error) {
 	v.Type = r.String("VPN_TYPE")
+	v.TypeExplicit = v.Type != ""
 
 	err = v.Provider.read(r, v.Type)
 	if err != nil {

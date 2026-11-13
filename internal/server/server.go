@@ -7,9 +7,12 @@ import (
 	"os"
 
 	"github.com/qdm12/gluetun/internal/configuration/settings"
+	"github.com/qdm12/gluetun/internal/control/observability"
+	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/httpserver"
 	"github.com/qdm12/gluetun/internal/models"
 	"github.com/qdm12/gluetun/internal/server/middlewares/auth"
+	transportpkg "github.com/qdm12/gluetun/internal/vpn/transport"
 )
 
 func New(ctx context.Context, controlServerSettings settings.ControlServer,
@@ -17,7 +20,8 @@ func New(ctx context.Context, controlServerSettings settings.ControlServer,
 	buildInfo models.BuildInformation, openvpnLooper VPNLooper,
 	pf PortForwarding, dnsLooper DNSLoop,
 	updaterLooper UpdaterLooper, publicIPLooper PublicIPLoop, storage Storage,
-	ipv6Supported bool) (
+	ipv6Supported bool, controlMetrics *observability.Metrics,
+	egress *verify.Service, transportService *transportpkg.Service) (
 	server *httpserver.Server, err error,
 ) {
 	authSettings, err := setupAuthMiddleware(controlServerSettings.AuthFilePath,
@@ -28,7 +32,7 @@ func New(ctx context.Context, controlServerSettings settings.ControlServer,
 
 	handler, err := newHandler(ctx, logger, *controlServerSettings.Log, authSettings,
 		controlSettings, buildInfo, openvpnLooper, pf, dnsLooper, updaterLooper, publicIPLooper,
-		storage, ipv6Supported)
+		storage, ipv6Supported, controlMetrics, egress, transportService)
 	if err != nil {
 		return nil, fmt.Errorf("creating handler: %w", err)
 	}

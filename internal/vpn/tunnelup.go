@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
 	"github.com/qdm12/gluetun/internal/constants/vpn"
 	"github.com/qdm12/gluetun/internal/netlink"
@@ -20,6 +21,9 @@ import (
 
 type tunnelUpData struct {
 	upCommand string
+	// prepared is true when the transport ladder already applied the firewall
+	// rules and the MTU discovery before committing the transport.
+	prepared bool
 	// Healthcheck
 	serverIP netip.Addr
 	pmtud    tunnelUpPMTUDData
@@ -49,16 +53,12 @@ type tunnelUpPMTUDData struct {
 	tcpAddrs []netip.AddrPort
 }
 
-func (l *Loop) onTunnelUp(ctx, loopCtx context.Context, data tunnelUpData) {
-	vpnSettings := l.GetSettings()
-	switch vpnType := vpnSettings.Type; vpnType {
-	case vpn.Wireguard, vpn.AmneziaWg:
-		l.logger.Infof("%s setup is complete. "+
-			"Note %s is a silent protocol and it may or may not work, without giving any error message. "+
-			"Typically i/o timeout errors indicate the %s connection is not working.",
-			vpnType, vpnType, vpnType)
-	}
-
+// applyTunnelUp reapplies the firewall input rules and runs MTU discovery. It
+// is called before the transport ladder commits a transport and by the
+// upstream path when the tunnel becomes ready.
+func (l *Loop) applyTunnelUp(ctx context.Context, vpnSettings settings.VPN,
+	data tunnelUpData,
+) {
 	l.client.CloseIdleConnections()
 
 	for _, vpnPort := range l.vpnInputPorts {
@@ -80,14 +80,31 @@ func (l *Loop) onTunnelUp(ctx, loopCtx context.Context, data tunnelUpData) {
 	}
 
 	_, _ = l.dnsLooper.ApplyStatus(ctx, constants.Running)
+}
+
+func (l *Loop) onTunnelUp(ctx, loopCtx context.Context, vpnSettings settings.VPN,
+	data tunnelUpData,
+) {
+	switch vpnType := vpnSettings.Type; vpnType {
+	case vpn.Wireguard, vpn.AmneziaWg:
+		l.logger.Infof("%s setup is complete. "+
+			"Note %s is a silent protocol and it may or may not work, without giving any error message. "+
+			"Typically i/o timeout errors indicate the %s connection is not working.",
+			vpnType, vpnType, vpnType)
+	}
+
+	if !data.prepared {
+		l.applyTunnelUp(ctx, vpnSettings, data)
+	}
 
 	<-l.healthDone // make sure the health checker is stopped before restarting it
 	icmpTargetIPs := l.healthSettings.ICMPTargetIPs
 	if len(icmpTargetIPs) == 1 && icmpTargetIPs[0].IsUnspecified() {
 		icmpTargetIPs = []netip.Addr{data.serverIP}
 	}
+	restartVPN := *l.healthSettings.RestartVPN && !l.ladderActive.Load()
 	l.healthChecker.SetConfig(l.healthSettings.TargetAddresses, icmpTargetIPs,
-		l.healthSettings.SmallCheckType, !*l.healthSettings.RestartVPN)
+		l.healthSettings.SmallCheckType, !restartVPN)
 
 	healthErrCh, err := l.healthChecker.Start(ctx)
 	l.healthServer.SetError(err)
@@ -95,7 +112,7 @@ func (l *Loop) onTunnelUp(ctx, loopCtx context.Context, data tunnelUpData) {
 		if ctx.Err() != nil {
 			return
 		}
-		if *l.healthSettings.RestartVPN {
+		if restartVPN {
 			// Note this restart call must be done in a separate goroutine
 			// from the VPN loop goroutine.
 			l.restartVPN(loopCtx, err)
@@ -162,7 +179,7 @@ func (l *Loop) collectHealthErrors(ctx, loopCtx context.Context,
 		case healthErr := <-healthErrCh:
 			l.healthServer.SetError(healthErr)
 			if healthErr != nil {
-				if *l.healthSettings.RestartVPN {
+				if *l.healthSettings.RestartVPN && !l.ladderActive.Load() {
 					// Note this restart call must be done in a separate goroutine
 					// from the VPN loop goroutine.
 					_ = l.healthChecker.Stop()

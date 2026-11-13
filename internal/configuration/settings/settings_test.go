@@ -122,6 +122,20 @@ func Test_Settings_String(t *testing.T) {
 |   |   ├── Health cooldown maximum: 5m0s
 |   |   ├── Probe interval: 30s
 |   |   └── Probe domain: example.com
+|   ├── Transport ladder settings:
+|   |   ├── Enabled: yes
+|   |   ├── Ladder: wireguard, openvpn-udp, openvpn-tcp
+|   |   ├── Attempt timeout: 30s
+|   |   ├── TCP attempt timeout: 45s
+|   |   ├── Maximum attempts: 2
+|   |   ├── Breaker threshold: 3
+|   |   ├── Breaker cooldown: 2m0s
+|   |   ├── Breaker cooldown maximum: 15m0s
+|   |   ├── Backoff base: 30s
+|   |   ├── Backoff maximum: 5m0s
+|   |   ├── Maximum cycles: 3
+|   |   ├── Jitter: 0.2
+|   |   └── Local reconnect maximum: 3
 |   └── Canary settings:
 |       └── Enabled: no
 ├── Storage settings:

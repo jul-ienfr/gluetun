@@ -19,6 +19,7 @@ import (
 	"github.com/qdm12/gluetun/internal/control/state"
 	"github.com/qdm12/gluetun/internal/egress/verify"
 	"github.com/qdm12/gluetun/internal/models"
+	transportpkg "github.com/qdm12/gluetun/internal/vpn/transport"
 )
 
 const (
@@ -31,9 +32,11 @@ const (
 // it is disabled the switch surface stays unavailable.
 func newControlHandler(logger Logger, control settings.Control,
 	buildInfo models.BuildInformation, stationID string, vpnLooper VPNLooper,
-	dnsLooper DNSLoop, publicIPLooper PublicIPLoop, storage Storage,
+	dnsLooper DNSLoop, storage Storage,
+	metrics *observability.Metrics, egress *verify.Service,
+	transportService *transportpkg.Service,
 ) *api.Handler {
-	egressService := newEgressService(control, publicIPLooper, logger)
+	egressService := egress
 	var egressAPI api.EgressService
 	if egressService != nil {
 		egressAPI = egressService
@@ -55,7 +58,9 @@ func newControlHandler(logger Logger, control settings.Control,
 	}
 
 	eventBus, eventLog := newEventBus(control, logger)
-	metrics := observability.NewMetrics()
+	if metrics == nil {
+		metrics = observability.NewMetrics()
+	}
 
 	var manager *jobs.Manager
 	catalogService := newCatalog(storage, vpnLooper.GetSettings().Provider.Name)
@@ -84,6 +89,11 @@ func newControlHandler(logger Logger, control settings.Control,
 		handler.SetDNS(dnsService)
 	}
 	handler.SetEvents(eventBus)
+	if transportService != nil {
+		handler.SetTransport(transportService)
+		transportService.SetEventSink(
+			events.NewTransportSink(eventBus, eventLog, logger.Warn))
+	}
 	handler.SetState(&vpnStateService{
 		stationID: stationID,
 		stateMode: control.StateMode,

@@ -21,6 +21,11 @@ func (l *Loop) Run(ctx context.Context, done chan<- struct{}) {
 	for ctx.Err() == nil {
 		settings := l.state.GetSettings()
 
+		if l.shouldRunLadder(settings) {
+			l.runLadder(ctx, settings)
+			continue
+		}
+
 		providerConf := l.providers.Get(settings.Provider.Name)
 
 		portForwarder := getPortForwarder(providerConf, l.providers,
@@ -90,7 +95,7 @@ func (l *Loop) Run(ctx context.Context, done chan<- struct{}) {
 		for stayHere {
 			select {
 			case <-tunnelReady:
-				go l.onTunnelUp(vpnCtx, ctx, tunnelUpData) //nolint:gosec
+				go l.onTunnelUp(vpnCtx, ctx, settings, tunnelUpData) //nolint:gosec
 			case <-ctx.Done():
 				l.cleanup()
 				vpnCancel()

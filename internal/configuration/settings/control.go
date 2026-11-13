@@ -54,6 +54,8 @@ type Control struct {
 	Egress Egress
 	// DNS contains the DNS ladder settings.
 	DNS DNSLadder
+	// Transport contains the transport ladder settings.
+	Transport TransportLadder
 	// Canary contains the neutral HTTP canary settings.
 	Canary Canary
 }
@@ -100,6 +102,11 @@ func (c Control) validate() (err error) {
 		return fmt.Errorf("dns: %w", err)
 	}
 
+	err = c.Transport.validate()
+	if err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+
 	err = c.Canary.validate()
 	if err != nil {
 		return fmt.Errorf("canary: %w", err)
@@ -115,6 +122,7 @@ func (c Control) copy() (copied Control) {
 		StateMode: c.StateMode,
 		Egress:    c.Egress.copy(),
 		DNS:       c.DNS.copy(),
+		Transport: c.Transport.copy(),
 		Canary:    c.Canary,
 	}
 }
@@ -127,6 +135,7 @@ func (c *Control) overrideWith(other Control) {
 	c.StateMode = gosettings.OverrideWithComparable(c.StateMode, other.StateMode)
 	c.Egress.overrideWith(other.Egress)
 	c.DNS.overrideWith(other.DNS)
+	c.Transport.overrideWith(other.Transport)
 	c.Canary.overrideWith(other.Canary)
 }
 
@@ -136,6 +145,7 @@ func (c *Control) setDefaults() {
 	c.StateMode = gosettings.DefaultComparable(c.StateMode, "state")
 	c.Egress.setDefaults()
 	c.DNS.setDefaults()
+	c.Transport.setDefaults()
 	c.Canary.setDefaults()
 }
 
@@ -150,6 +160,7 @@ func (c Control) toLinesNode() (node *gotree.Node) {
 	node.Appendf("State mode: %s", c.StateMode)
 	node.AppendNode(c.Egress.toLinesNode())
 	node.AppendNode(c.DNS.toLinesNode())
+	node.AppendNode(c.Transport.toLinesNode())
 	node.AppendNode(c.Canary.toLinesNode())
 	return node
 }
@@ -169,6 +180,11 @@ func (c *Control) read(r *reader.Reader) (err error) {
 	}
 
 	err = c.DNS.read(r)
+	if err != nil {
+		return err
+	}
+
+	err = c.Transport.read(r)
 	if err != nil {
 		return err
 	}

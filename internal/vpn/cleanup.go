@@ -10,8 +10,10 @@ import (
 )
 
 func (l *Loop) cleanup() {
-	settings := l.GetSettings()
+	l.cleanupWith(l.GetSettings())
+}
 
+func (l *Loop) cleanupWith(settings settings.VPN) {
 	var err error
 	if *settings.DownCommand != "" {
 		commandString := strings.ReplaceAll(*settings.DownCommand, "{{VPN_INTERFACE}}", getVPNInterface(settings))
