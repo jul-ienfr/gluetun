@@ -3,6 +3,7 @@ package jobs
 import (
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,6 +265,40 @@ func Test_Executor_RotationExhaustedPreservesStation(t *testing.T) {
 	// Each failed candidate is restored before the next one.
 	if len(tunnel.applied) != 6 {
 		t.Fatalf("apply calls = %d, want 6", len(tunnel.applied))
+	}
+}
+
+func Test_Executor_RotationRestoreFailureReportsDegradedJob(t *testing.T) {
+	t.Parallel()
+
+	tunnel := &fakeTunnel{applyErr: errors.New("tunnel rejected")}
+	verifier := &fakeVerifier{}
+	executor := newRotationExecutor(t, tunnel, verifier, map[string]Server{
+		"a.example.com": switchServer("a.example.com"),
+	})
+	request := testRotationRequest("a.example.com")
+
+	machine := newTestMachine(t, KindRotate)
+	result, err := executor.ExecuteRotation(t.Context(), machine, request)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if result.Job.State != StateFailedDegraded {
+		t.Fatalf("state = %q, want failed_degraded", result.Job.State)
+	}
+	if !strings.Contains(result.Job.Error, "applying rotation candidate") {
+		t.Errorf("error = %q, want the candidate failure", result.Job.Error)
+	}
+	if !strings.Contains(result.Job.Error, "restoring previous tunnel") {
+		t.Errorf("error = %q, want the restore failure", result.Job.Error)
+	}
+	if len(result.Job.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(result.Job.Attempts))
+	}
+	attempt := result.Job.Attempts[0]
+	if attempt.Hostname != "a.example.com" || attempt.Result != "rejected" ||
+		attempt.Phase != StateApplying {
+		t.Errorf("attempt = %+v", attempt)
 	}
 }
 

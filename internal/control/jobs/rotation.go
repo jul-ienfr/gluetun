@@ -364,18 +364,18 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		cancelApply()
 		if err != nil {
 			lastErr = fmt.Errorf("applying rotation candidate: %w", err)
-			if restoreErr := e.restoreCandidate(ctx, machine, snapshot); restoreErr != nil {
-				result.Job = machine.Job()
-				return result, errors.Join(lastErr, restoreErr)
-			}
-			machine.AddAttempt(Attempt{
+			attempt := Attempt{
 				Hostname:   candidate.Hostname,
 				Phase:      StateApplying,
 				Result:     "rejected",
 				Reason:     rotationReason(StateApplying, err),
 				ExpectedIP: candidate.ExpectedEgressIP,
-			})
-			e.recordRotationFailure(candidate.Hostname)
+			}
+			if restoreErr := e.rejectCandidate(ctx, machine, snapshot,
+				attempt, lastErr); restoreErr != nil {
+				result.Job = machine.Job()
+				return result, restoreErr
+			}
 			continue
 		}
 
@@ -388,18 +388,18 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		cancelAwait()
 		if err != nil {
 			lastErr = fmt.Errorf("awaiting rotation candidate: %w", err)
-			if restoreErr := e.restoreCandidate(ctx, machine, snapshot); restoreErr != nil {
-				result.Job = machine.Job()
-				return result, errors.Join(lastErr, restoreErr)
-			}
-			machine.AddAttempt(Attempt{
+			attempt := Attempt{
 				Hostname:   candidate.Hostname,
 				Phase:      StateAwaitingTunnel,
 				Result:     "rejected",
 				Reason:     rotationReason(StateAwaitingTunnel, err),
 				ExpectedIP: candidate.ExpectedEgressIP,
-			})
-			e.recordRotationFailure(candidate.Hostname)
+			}
+			if restoreErr := e.rejectCandidate(ctx, machine, snapshot,
+				attempt, lastErr); restoreErr != nil {
+				result.Job = machine.Job()
+				return result, restoreErr
+			}
 			continue
 		}
 
@@ -415,37 +415,37 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		cancelVerify()
 		if verifyErr != nil {
 			lastErr = fmt.Errorf("verifying rotation candidate: %w", verifyErr)
-			if restoreErr := e.restoreCandidate(ctx, machine, snapshot); restoreErr != nil {
-				result.Job = machine.Job()
-				return result, errors.Join(lastErr, restoreErr)
-			}
-			machine.AddAttempt(Attempt{
+			attempt := Attempt{
 				Hostname:   candidate.Hostname,
 				Phase:      StateVerifyingEgress,
 				Result:     "rejected",
 				Reason:     rotationReason(StateVerifyingEgress, verifyErr),
 				ExpectedIP: candidate.ExpectedEgressIP,
-			})
-			e.recordRotationFailure(candidate.Hostname)
+			}
+			if restoreErr := e.rejectCandidate(ctx, machine, snapshot,
+				attempt, lastErr); restoreErr != nil {
+				result.Job = machine.Job()
+				return result, restoreErr
+			}
 			continue
 		}
 
 		gateErr := checkSwitchGates(single, snapshot, verification)
 		if gateErr != nil {
 			lastErr = gateErr
-			if restoreErr := e.restoreCandidate(ctx, machine, snapshot); restoreErr != nil {
-				result.Job = machine.Job()
-				return result, errors.Join(lastErr, restoreErr)
-			}
-			machine.AddAttempt(Attempt{
+			attempt := Attempt{
 				Hostname:   candidate.Hostname,
 				Phase:      StateVerifyingEgress,
 				Result:     "rejected",
 				Reason:     reasonFor(gateErr),
 				ObservedIP: verification.IP,
 				ExpectedIP: candidate.ExpectedEgressIP,
-			})
-			e.recordRotationFailure(candidate.Hostname)
+			}
+			if restoreErr := e.rejectCandidate(ctx, machine, snapshot,
+				attempt, lastErr); restoreErr != nil {
+				result.Job = machine.Job()
+				return result, restoreErr
+			}
 			continue
 		}
 
@@ -501,6 +501,21 @@ func (e *Executor) cancelRotation(machine *Machine, ctx context.Context,
 	e.emit(EventJobCanceled, machine.Job())
 	result.Job = machine.Job()
 	return result, ErrCanceled
+}
+
+// rejectCandidate records the failed attempt before restoring the snapshot so
+// a failed restore still exposes which candidate failed and why.
+func (e *Executor) rejectCandidate(ctx context.Context, machine *Machine,
+	snapshot state.TunnelSnapshot, attempt Attempt, cause error,
+) error {
+	machine.AddAttempt(attempt)
+	e.recordRotationFailure(attempt.Hostname)
+	restoreErr := e.restoreCandidate(ctx, machine, snapshot)
+	if restoreErr != nil {
+		machine.SetError(errors.Join(cause, restoreErr).Error())
+		return errors.Join(cause, restoreErr)
+	}
+	return nil
 }
 
 // restoreCandidate re-applies the station snapshot captured before the
