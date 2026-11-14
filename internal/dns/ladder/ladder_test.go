@@ -81,6 +81,7 @@ func Test_Ladder_Fallback(t *testing.T) {
 		TierDoT:   {NewEndpoint("1.1.1.1:853", "cloudflare")},
 		TierPlain: {NewEndpoint("8.8.8.8:53", "google")},
 	})
+	ladder.everSucceeded = true
 
 	response, err := ladder.Resolve(context.Background(), testRequest())
 	require.NoError(t, err)
@@ -129,6 +130,35 @@ func Test_Ladder_PlainIsTriedEvenWhenItsTierIsDown(t *testing.T) {
 	require.Len(t, exchanger.calls, 2)
 	assert.Equal(t, TierDoT, exchanger.calls[0].tier)
 	assert.Equal(t, TierPlain, exchanger.calls[1].tier)
+}
+
+func Test_Ladder_StartupFailuresDoNotDownTheTier(t *testing.T) {
+	t.Parallel()
+
+	base := time.Now()
+	exchanger := &fakeExchanger{
+		handler: func(exchangeCall) (*dns.Msg, error) {
+			return nil, errors.New("network not ready")
+		},
+	}
+	ladder := newTestLadder(t, exchanger, map[TierType][]Endpoint{
+		TierDoT:   {NewEndpoint("1.1.1.1:853", "cloudflare")},
+		TierPlain: {NewEndpoint("8.8.8.8:53", "google")},
+	})
+	ladder.now = func() time.Time { return base }
+
+	_, err := ladder.Resolve(context.Background(), testRequest())
+	require.Error(t, err)
+	tiers := ladder.Tiers()
+	require.Len(t, tiers, 2)
+	assert.Equal(t, StateUp, tiers[0].State)
+
+	base = base.Add(31 * time.Second)
+	for range 3 {
+		_, err = ladder.Resolve(context.Background(), testRequest())
+		require.Error(t, err)
+	}
+	assert.Equal(t, StateDown, ladder.Tiers()[0].State)
 }
 
 func Test_Ladder_NXDOMAINIsTerminal(t *testing.T) {
@@ -244,6 +274,7 @@ func Test_Ladder_DownTiersFailClosed(t *testing.T) {
 		Exchanger: exchanger,
 	})
 	require.NoError(t, err)
+	ladder.everSucceeded = true
 
 	_, err = ladder.Resolve(context.Background(), testRequest())
 	assert.ErrorIs(t, err, ErrLadderExhausted)

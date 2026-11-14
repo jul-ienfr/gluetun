@@ -278,6 +278,44 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 		return result, fmt.Errorf("capturing tunnel snapshot: %w", err)
 	}
 	machine.SetSnapshotBefore(snapshot)
+
+	// ADR-017-01: a tunnel with a fresh egress proof is already committed.
+	// Cutting it to chase another host destroys the only proof the station
+	// has; the caller must wait for the proof to age instead.
+	if freshEgressProof(snapshot) {
+		machine.SetTarget(Target{
+			Hostname:        snapshot.ServerHostname,
+			EndpointIP:      snapshot.EndpointIP,
+			TransportDetail: snapshot.Transport,
+		})
+		machine.SetVerification(*snapshot.Egress)
+		for _, next := range []State{
+			StatePreflight,
+			StateDraining,
+			StateApplying,
+			StateAwaitingTunnel,
+			StateVerifyingEgress,
+			StateCommitted,
+		} {
+			err = machine.Transition(next)
+			if err != nil {
+				result.Job = machine.Job()
+				return result, err
+			}
+		}
+		machine.AddAttempt(Attempt{
+			Hostname:   snapshot.ServerHostname,
+			Phase:      StateCommitted,
+			Result:     "committed",
+			Reason:     "fresh-egress-proof",
+			ObservedIP: snapshot.Egress.IP,
+		})
+		result.Job = machine.Job()
+		result.WouldCutTunnel = false
+		e.emit(EventJobCommitted, machine.Job())
+		return result, nil
+	}
+
 	result.WouldCutTunnel = true
 
 	budget := request.attemptBudget()
@@ -483,6 +521,14 @@ func (e *Executor) ExecuteRotation(ctx context.Context, machine *Machine,
 	result.Job = machine.Job()
 	return result, fmt.Errorf("%w: %d candidates: %w", ErrExhausted, budget,
 		lastErr)
+}
+
+const freshEgressProofMaxAge = time.Minute
+
+func freshEgressProof(snapshot state.TunnelSnapshot) bool {
+	return snapshotEgressProven(snapshot) &&
+		!snapshot.Egress.VerifiedAt.IsZero() &&
+		time.Since(snapshot.Egress.VerifiedAt) <= freshEgressProofMaxAge
 }
 
 func (e *Executor) cancelRotation(machine *Machine, ctx context.Context,

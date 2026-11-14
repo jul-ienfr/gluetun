@@ -19,9 +19,10 @@ var (
 )
 
 const (
-	defaultAttempts    = 1
-	defaultTimeout     = 3 * time.Second
-	defaultProbeDomain = "example.com"
+	defaultAttempts     = 1
+	defaultTimeout      = 3 * time.Second
+	defaultProbeDomain  = "example.com"
+	startupFailureGrace = 30 * time.Second
 )
 
 // Exchanger sends one DNS request to one endpoint. tcp requests a TCP retry,
@@ -47,15 +48,17 @@ type Settings struct {
 
 // Ladder resolves DNS requests through ordered tiers and endpoints.
 type Ladder struct {
-	mutex       sync.Mutex
-	tiers       []Tier
-	health      *Health
-	exchanger   Exchanger
-	timeout     time.Duration
-	attempts    int
-	failClosed  bool
-	probeDomain string
-	now         func() time.Time
+	mutex         sync.Mutex
+	tiers         []Tier
+	health        *Health
+	exchanger     Exchanger
+	timeout       time.Duration
+	attempts      int
+	failClosed    bool
+	probeDomain   string
+	startedAt     time.Time
+	everSucceeded bool
+	now           func() time.Time
 }
 
 // New validates the settings and builds the DNS ladder.
@@ -126,6 +129,7 @@ func New(settings Settings) (*Ladder, error) {
 		attempts:    attempts,
 		failClosed:  settings.FailClosed,
 		probeDomain: probeDomain,
+		startedAt:   now(),
 		now:         now,
 	}, nil
 }
@@ -308,12 +312,20 @@ func (l *Ladder) observeSuccess(tierIndex, endpointIndex int,
 ) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
+	l.everSucceeded = true
 	l.health.Success(&l.tiers[tierIndex], endpointIndex, latency)
 }
 
 func (l *Ladder) observeFailure(tierIndex, endpointIndex int, cause error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
+	// Routes and the firewall are still being installed during the first
+	// seconds of a tunnel: a DNS timeout there is not a dead tier. Do not
+	// put the tier in cooldown before the ladder has ever answered.
+	if !l.everSucceeded &&
+		l.now().Sub(l.startedAt) < startupFailureGrace {
+		return
+	}
 	l.health.Failure(&l.tiers[tierIndex], endpointIndex, cause)
 }
 

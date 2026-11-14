@@ -268,6 +268,45 @@ func Test_Executor_RotationExhaustedPreservesStation(t *testing.T) {
 	}
 }
 
+func Test_Executor_RotationKeepsAFreshProvenTunnel(t *testing.T) {
+	t.Parallel()
+
+	tunnel := &fakeTunnel{}
+	verifier := &fakeVerifier{}
+	executor := newRotationExecutor(t, tunnel, verifier, map[string]Server{
+		"a.example.com": switchServer("a.example.com"),
+	})
+	snapshotter := &fakeSnapshotter{
+		snapshot: func(string) state.TunnelSnapshot {
+			snapshot := executorSnapshot()
+			snapshot.Egress.VerifiedAt = time.Now()
+			return snapshot
+		},
+	}
+	executor.snapshotter = snapshotter
+	request := testRotationRequest("a.example.com")
+
+	machine := newTestMachine(t, KindRotate)
+	result, err := executor.ExecuteRotation(t.Context(), machine, request)
+	if err != nil {
+		t.Fatalf("execute rotation: %v", err)
+	}
+	if result.Job.State != StateCommitted {
+		t.Fatalf("state = %q, want committed", result.Job.State)
+	}
+	if result.Job.Target.Hostname != "old.example.com" {
+		t.Errorf("target = %q, want the proven tunnel",
+			result.Job.Target.Hostname)
+	}
+	if len(tunnel.applied) != 0 {
+		t.Fatalf("applied = %d, want no tunnel change", len(tunnel.applied))
+	}
+	if len(result.Job.Attempts) != 1 ||
+		result.Job.Attempts[0].Reason != "fresh-egress-proof" {
+		t.Fatalf("attempts = %+v", result.Job.Attempts)
+	}
+}
+
 func Test_Executor_RotationRestoreFailureReportsDegradedJob(t *testing.T) {
 	t.Parallel()
 
