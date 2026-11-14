@@ -49,6 +49,13 @@ func Test_HTTPSource_Fetch(t *testing.T) {
 			},
 			expectedIP: netip.MustParseAddr("23.1.2.3"),
 		},
+		"cloudflare_trace": {
+			handler: func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write([]byte("fl=123abc\nh=1.1.1.1\n" +
+					"ip=23.1.2.3\nts=1794640000.000\nvisit_scheme=http\n"))
+			},
+			expectedIP: netip.MustParseAddr("23.1.2.3"),
+		},
 		"ipv6": {
 			handler: func(writer http.ResponseWriter, _ *http.Request) {
 				_, _ = writer.Write([]byte("2001:4860:4860::8888"))

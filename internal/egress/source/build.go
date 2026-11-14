@@ -17,6 +17,11 @@ func httpSourceURL(name string) (url string, ok bool) {
 		return "https://ifconfig.me/ip", true
 	case "icanhazip":
 		return "https://icanhazip.com", true
+	case "cloudflare":
+		// Literal address: the answer does not need the tunnel DNS, which
+		// breaks the startup deadlock where egress verification waits for a
+		// resolver that only works once the tunnel is verified.
+		return "http://1.1.1.1/cdn-cgi/trace", true
 	default:
 		return "", false
 	}

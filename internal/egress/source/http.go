@@ -119,8 +119,30 @@ func parseHTTPBody(body []byte) (ip netip.Addr, payload httpPayload,
 		return parseJSONBody(trimmed)
 	}
 
+	// Cloudflare's /cdn-cgi/trace answers key=value lines rather than a bare
+	// IP. It is served from the literal 1.1.1.1, so it keeps working while the
+	// tunnel resolver is still unavailable.
+	if traceIP, ok := parseTraceIP(trimmed); ok {
+		return traceIP, payload, nil
+	}
+
 	ip, err = parseIP(trimmed)
 	return ip, payload, err
+}
+
+func parseTraceIP(body string) (ip netip.Addr, ok bool) {
+	for line := range strings.SplitSeq(body, "\n") {
+		value, found := strings.CutPrefix(strings.TrimSpace(line), "ip=")
+		if !found {
+			continue
+		}
+		parsed, err := parseIP(value)
+		if err != nil {
+			return netip.Addr{}, false
+		}
+		return parsed, true
+	}
+	return netip.Addr{}, false
 }
 
 func parseJSONBody(trimmed string) (ip netip.Addr, payload httpPayload,
