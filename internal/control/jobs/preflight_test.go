@@ -173,7 +173,7 @@ func Test_PreflightCheck(t *testing.T) {
 			expectedAddress:  "203.0.113.10:51820",
 			expectedPort:     51820,
 			expectedIP:       "203.0.113.10",
-			expectedResolved: []netip.Addr{alternateIP},
+			expectedResolved: []netip.Addr{catalogIP},
 		},
 		"unknown target": {
 			target:      testTarget(),
@@ -211,7 +211,10 @@ func Test_PreflightCheck(t *testing.T) {
 			target:      testTarget(),
 			transport:   TransportWireGuard,
 			credentials: wireGuardCredentials,
-			server:      catalogServer,
+			server: Server{
+				Hostname:  "nl-1234.nordvpn.com",
+				Protocols: []string{"wireguard"},
+			},
 			found:       true,
 			resolveErr:  errors.New("no such host"),
 			expectedErr: ErrResolutionFailed,
@@ -353,6 +356,65 @@ func Test_PreflightCheck(t *testing.T) {
 			assert.Equal(t, testCase.transport, prober.transport)
 			assert.Equal(t, testCase.expectedAddress, prober.address)
 		})
+	}
+}
+
+func Test_Preflight_UsesCatalogIPWithoutDNS(t *testing.T) {
+	t.Parallel()
+
+	preflight := NewPreflight(PreflightSettings{
+		Catalog: switchCatalog{servers: map[string]Server{
+			"new.example.com": switchServer("new.example.com"),
+		}},
+		Resolver:    switchResolver{err: errors.New("dns down")},
+		Prober:      switchProber{},
+		Credentials: Credentials{OpenVPN: true},
+	})
+
+	result, err := preflight.Check(t.Context(), PreflightRequest{
+		Target: Target{
+			Provider: "nordvpn",
+			VPN:      VPNOpenVPN,
+			Hostname: "new.example.com",
+		},
+		Transport: TransportOpenVPNUDP,
+	})
+	if err != nil {
+		t.Fatalf("checking target: %v", err)
+	}
+	expected := netip.MustParseAddr("203.0.113.10")
+	if result.EndpointIP != expected {
+		t.Fatalf("endpoint = %s, want %s", result.EndpointIP, expected)
+	}
+}
+
+func Test_Preflight_UsesExplicitEndpointWithoutDNS(t *testing.T) {
+	t.Parallel()
+
+	preflight := NewPreflight(PreflightSettings{
+		Catalog: switchCatalog{servers: map[string]Server{
+			"new.example.com": switchServer("new.example.com"),
+		}},
+		Resolver:    switchResolver{err: errors.New("dns down")},
+		Prober:      switchProber{},
+		Credentials: Credentials{OpenVPN: true},
+	})
+	endpoint := netip.MustParseAddr("203.0.113.10")
+
+	result, err := preflight.Check(t.Context(), PreflightRequest{
+		Target: Target{
+			Provider:   "nordvpn",
+			VPN:        VPNOpenVPN,
+			Hostname:   "new.example.com",
+			EndpointIP: endpoint,
+		},
+		Transport: TransportOpenVPNUDP,
+	})
+	if err != nil {
+		t.Fatalf("checking target: %v", err)
+	}
+	if result.EndpointIP != endpoint {
+		t.Fatalf("endpoint = %s, want %s", result.EndpointIP, endpoint)
 	}
 }
 

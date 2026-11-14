@@ -195,33 +195,40 @@ func (p *Preflight) Check(ctx context.Context,
 		return PreflightResult{}, err
 	}
 
-	resolved, err := p.resolver.LookupNetIP(ctx, "ip", request.Target.Hostname)
-	if err != nil {
-		return PreflightResult{}, fmt.Errorf("%w: %w", ErrResolutionFailed, err)
-	}
-	resolved = unmapAddrs(resolved)
-
-	candidates := resolved
-	if len(candidates) == 0 {
-		candidates = unmapAddrs(server.IPs)
-	}
-	if len(candidates) == 0 {
-		return PreflightResult{}, fmt.Errorf(
-			"%w: hostname %q has no IP address",
-			ErrResolutionFailed, request.Target.Hostname)
-	}
-
 	endpoint := request.Target.EndpointIP
+	resolvedIPs := unmapAddrs(server.IPs)
 	if endpoint.IsValid() {
 		endpoint = endpoint.Unmap()
-		if !containsAddr(candidates, endpoint) &&
-			!containsAddr(unmapAddrs(server.IPs), endpoint) {
-			return PreflightResult{}, fmt.Errorf(
-				"%w: %s is not advertised by %q",
-				ErrEndpointIPMismatch, endpoint, request.Target.Hostname)
-		}
 	} else {
-		endpoint = candidates[0]
+		// Prefer the provider catalogue IPs. A broken station has no working
+		// DNS, and resolving the candidate through its dead tunnel made every
+		// rotate batch fail with resolution_failed before any transport was
+		// tried.
+		if len(resolvedIPs) == 0 {
+			resolved, resolveErr := p.resolver.LookupNetIP(ctx, "ip",
+				request.Target.Hostname)
+			if resolveErr != nil {
+				return PreflightResult{}, fmt.Errorf("%w: %w",
+					ErrResolutionFailed, resolveErr)
+			}
+			resolvedIPs = unmapAddrs(resolved)
+		}
+		if len(resolvedIPs) == 0 {
+			return PreflightResult{}, fmt.Errorf(
+				"%w: hostname %q has no IP address",
+				ErrResolutionFailed, request.Target.Hostname)
+		}
+		endpoint = resolvedIPs[0]
+	}
+	if len(resolvedIPs) == 0 && endpoint.IsValid() {
+		resolvedIPs = []netip.Addr{endpoint}
+	}
+
+	if request.Target.EndpointIP.IsValid() &&
+		!containsAddr(unmapAddrs(server.IPs), endpoint) {
+		return PreflightResult{}, fmt.Errorf(
+			"%w: %s is not advertised by %q",
+			ErrEndpointIPMismatch, endpoint, request.Target.Hostname)
 	}
 
 	port := request.Target.portFor(request.Transport)
@@ -238,7 +245,7 @@ func (p *Preflight) Check(ctx context.Context,
 		Provider:    request.Target.Provider,
 		Hostname:    request.Target.Hostname,
 		EndpointIP:  endpoint,
-		ResolvedIPs: candidates,
+		ResolvedIPs: resolvedIPs,
 		Transport:   request.Transport,
 		Port:        port,
 	}, nil
