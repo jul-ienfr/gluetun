@@ -60,6 +60,7 @@ type fakeTunnel struct {
 	applied  []state.TunnelSnapshot
 	applyErr error
 	awaitErr error
+	awaited  int
 	notify   chan struct{}
 	release  <-chan struct{}
 }
@@ -79,6 +80,7 @@ func (f *fakeTunnel) ApplySnapshot(_ context.Context, snapshot state.TunnelSnaps
 }
 
 func (f *fakeTunnel) AwaitSnapshot(_ context.Context, _ state.TunnelSnapshot) error {
+	f.awaited++
 	return f.awaitErr
 }
 
@@ -364,6 +366,43 @@ func Test_Executor_Inspect_Errors(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, testCase.wantError)
 			}
 		})
+	}
+}
+
+func Test_Executor_restoreCandidate_SkipsAwaitWithoutBaseline(t *testing.T) {
+	t.Parallel()
+
+	tunnel := &fakeTunnel{}
+	executor, _ := newTestExecutor(t, tunnel, &fakeVerifier{}, switchProber{})
+	snapshot := executorSnapshot()
+	snapshot.Egress = nil
+	machine := NewMachine(Job{
+		ID:        "job-rotate",
+		Kind:      KindRotate,
+		StationID: "station-1",
+		CreatedAt: testTime(),
+	}, testTime)
+	for _, next := range []State{
+		StateValidating, StatePreflight, StateDraining, StateApplying,
+	} {
+		err := machine.Transition(next)
+		if err != nil {
+			t.Fatalf("transition to %s: %v", next, err)
+		}
+	}
+
+	err := executor.restoreCandidate(t.Context(), machine, snapshot)
+	if err != nil {
+		t.Fatalf("restoring candidate: %v", err)
+	}
+	if len(tunnel.applied) != 1 {
+		t.Fatalf("apply calls = %d, want 1", len(tunnel.applied))
+	}
+	if tunnel.awaited != 0 {
+		t.Fatalf("await calls = %d, want 0", tunnel.awaited)
+	}
+	if machine.Job().State != StatePreflight {
+		t.Fatalf("state = %s, want preflight", machine.Job().State)
 	}
 }
 

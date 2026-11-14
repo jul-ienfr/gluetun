@@ -520,6 +520,21 @@ func (e *Executor) restoreCandidate(ctx context.Context, machine *Machine,
 		return machine.Transition(StatePreflight)
 	}
 
+	// A station that was already broken has no working baseline to prove.
+	// Reapplying the snapshot and waiting for its dead tunnel only burns the
+	// candidate budget; the next candidate overwrites the settings anyway.
+	if !snapshotEgressProven(snapshot) {
+		restoreCtx := context.WithoutCancel(ctx)
+		applyCtx, cancelApply := context.WithTimeout(restoreCtx, e.applyTimeout)
+		err = e.tunnel.ApplySnapshot(applyCtx, snapshot)
+		cancelApply()
+		if err != nil {
+			_ = machine.Transition(StateFailedDegraded)
+			return fmt.Errorf("restoring previous tunnel: %w", err)
+		}
+		return machine.Transition(StatePreflight)
+	}
+
 	restoreCtx := context.WithoutCancel(ctx)
 	applyCtx, cancelApply := context.WithTimeout(restoreCtx, e.applyTimeout)
 	err = e.tunnel.ApplySnapshot(applyCtx, snapshot)
