@@ -105,6 +105,32 @@ func Test_Ladder_Fallback(t *testing.T) {
 	assert.Equal(t, TierPlain, exchanger.calls[2].tier)
 }
 
+func Test_Ladder_PlainIsTriedEvenWhenItsTierIsDown(t *testing.T) {
+	t.Parallel()
+
+	exchanger := &fakeExchanger{}
+	exchanger.handler = func(call exchangeCall) (*dns.Msg, error) {
+		if call.tier == TierDoT {
+			return nil, errors.New("TCP 853 blocked")
+		}
+		return successResponse(), nil
+	}
+	ladder := newTestLadder(t, exchanger, map[TierType][]Endpoint{
+		TierDoT:   {NewEndpoint("1.1.1.1:853", "cloudflare")},
+		TierPlain: {NewEndpoint("8.8.8.8:53", "google")},
+	})
+	ladder.tiers[1].State = StateDown
+	cooldown := time.Now().Add(time.Minute)
+	ladder.tiers[1].CooldownUntil = &cooldown
+
+	response, err := ladder.Resolve(context.Background(), testRequest())
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Len(t, exchanger.calls, 2)
+	assert.Equal(t, TierDoT, exchanger.calls[0].tier)
+	assert.Equal(t, TierPlain, exchanger.calls[1].tier)
+}
+
 func Test_Ladder_NXDOMAINIsTerminal(t *testing.T) {
 	t.Parallel()
 

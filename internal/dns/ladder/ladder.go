@@ -223,30 +223,57 @@ func (l *Ladder) exchangeOnce(ctx context.Context, tierType TierType,
 
 // candidates returns tier and endpoint indexes by decreasing preference: up,
 // standby, then degraded. Down tiers are skipped until their cooldown expires.
+// Plain is always tried last, even when its cooldown is open: it is the only
+// tier that still works when the tunnel blocks DoT/853, and a DNS failure must
+// not be mistaken for a dead tunnel.
 func (l *Ladder) candidates() (candidates []tierCandidate) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
 	now := l.now()
-	groups := [3][]tierCandidate{}
+	groups := [4][]tierCandidate{}
+	plainIndex := -1
+	plainAdded := false
 	for tierIndex := range l.tiers {
 		tier := &l.tiers[tierIndex]
 		l.health.Refresh(tier)
 
+		if tier.Type == TierPlain {
+			plainIndex = tierIndex
+		}
 		endpoints := l.availableEndpoints(tier, now)
 		if len(endpoints) == 0 {
 			continue
 		}
 		candidate := tierCandidate{tierIndex: tierIndex, endpoints: endpoints}
+		added := false
 		switch tier.State {
 		case StateUp:
 			groups[0] = append(groups[0], candidate)
+			added = true
 		case StateStandby:
 			groups[1] = append(groups[1], candidate)
+			added = true
 		case StateDegraded:
 			if tier.CooldownUntil == nil || !now.Before(*tier.CooldownUntil) {
 				groups[2] = append(groups[2], candidate)
+				added = true
 			}
+		}
+		if added && tier.Type == TierPlain {
+			plainAdded = true
+		}
+	}
+	if plainIndex >= 0 && !plainAdded {
+		endpoints := make([]int, len(l.tiers[plainIndex].Endpoints))
+		for index := range endpoints {
+			endpoints[index] = index
+		}
+		if len(endpoints) > 0 {
+			groups[3] = append(groups[3], tierCandidate{
+				tierIndex: plainIndex,
+				endpoints: endpoints,
+			})
 		}
 	}
 	for _, group := range groups {
