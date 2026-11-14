@@ -385,8 +385,8 @@ func (d *ladderDriver) VerifyEgress(ctx context.Context) (netip.Addr, error) {
 			errors.New("egress verification is not configured"))
 	}
 
-	const attempts = 3
-	const retryDelay = time.Second
+	const attempts = 10
+	const retryDelay = 2 * time.Second
 	var lastVerification egress.Verification
 	var lastErr error
 	for attempt := range attempts {

@@ -69,7 +69,7 @@ func Test_ladderDriver_VerifyEgress_FailsAfterRetries(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if verifier.calls != 3 {
-		t.Fatalf("calls = %d, want 3", verifier.calls)
+	if verifier.calls != 10 {
+		t.Fatalf("calls = %d, want 10", verifier.calls)
 	}
 }

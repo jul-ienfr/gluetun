@@ -293,13 +293,11 @@ func withRetries(ctx context.Context, tryTimeouts []time.Duration,
 }
 
 func (c *Checker) startupCheck(ctx context.Context) error {
-	// connection isn't under load yet when the checker starts, so a short
-	// 6 seconds timeout suffices and provides quick enough feedback that
-	// the new connection is not working. However, since the addresses to dial
-	// may be multiple, we run the check in parallel. If any succeeds, the check passes.
-	// This is to prevent false negatives at startup, if one of the addresses is down
-	// for external reasons.
-	const timeout = 6 * time.Second
+	// A WireGuard handshake can take tens of seconds after the interface is
+	// configured; a 6 second deadline restarted tunnels that were still
+	// settling. The check stays bounded, but gives the handshake time to
+	// complete before the VPN loop is restarted.
+	const timeout = 30 * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	errCh := make(chan error)
